@@ -21,3 +21,5 @@ def gen_field(bits):
 (F1, q1, w1) = gen_field(46)
 (F2, q2, w2) = gen_field(60)
 
+print(q1, q2)
+
