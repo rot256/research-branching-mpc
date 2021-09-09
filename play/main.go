@@ -2,9 +2,9 @@ package main
 
 import (
 	"fmt"
-
 	"github.com/ldsec/lattigo/v2/ring"
 	"github.com/ldsec/lattigo/v2/utils"
+	"math/big"
 )
 
 const BIT_SIZE = 60
@@ -80,77 +80,109 @@ func gsw(ringQ *ring.Ring) {
 				panic("not approximate eigenvector")
 			}
 		}
-
-		fmt.Println(e[0])
 	}()
-
-	/*
-		// sanity check
-
-		r := make([]*ring.Poly, len(B))
-		t_i := ringQ.NewPoly()
-		ringQ.Neg(S, t_i)
-
-		for i := 0; i < len(r); i++ {
-			fmt.Println(b[i])
-			r[i] = b[i].CopyNew()
-			ringQ.MulCoeffsAndAdd(B[i], t_i, r[i])
-			if !r[i].Equals(e[i]) {
-				panic("equals noise")
-			}
-		}
-	*/
 
 	// test encryption
 
 	// encode plaintext
-
-	/*
-		v := uint64(1)
-		pt := ringQ.NewPoly()
-		fmt.Println("len", len(pt.Coeffs[0]))
-		fmt.Println("len", len(pt.Coeffs))
-		pt.Coeffs[1][0] = v
-	*/
-
-	// encrypt zero
-	C := make([]*ring.Poly, GSW_N1)
-	X := make([]*ring.Poly, GSW_N1)
-	for i := 0; i < GSW_N1; i++ {
-		C[i] = ringQ.NewPoly()
-		X[i] = gaussian.ReadNew() // X <- Gaussian()
-		ringQ.MulCoeffs(P[i], X[i], C[i])
+	if len(ringQ.Modulus) != 2 {
+		panic("not supported")
 	}
 
-	//
+	q := ringQ.Modulus[0]
+	q_p := ringQ.Modulus[1]
 
+	v := 0
+
+	// compute v * q' \mod q
+	w := func() uint64 {
+		q_int := big.NewInt(0)
+		q_int.SetUint64(q)
+
+		w := big.NewInt(0)
+		w.SetUint64(q_p)
+		w.Mul(w, big.NewInt(int64(v)))
+		w.Mod(w, q_int)
+		return w.Uint64()
+	}()
+
+	C := make([]*ring.Poly, GSW_N1)
+	for i := 0; i < GSW_N1; i++ {
+		C[i] = ringQ.NewPoly()
+		C[i].Coeffs[0][0] = w
+	}
+
+	// encrypt zero
+	X := gaussian.ReadNew()
+	ringQ.NTT(X, X)
+	for i := 0; i < GSW_N1; i++ {
+		ringQ.NTT(C[i], C[i])
+		ringQ.MulCoeffsAndAdd(P[i], X, C[i])
+	}
+
+	// decrypt
 	pt := make([]*ring.Poly, GSW_N0)
 	for i := 0; i < GSW_N0; i++ {
-		pt[i] = ringQ.NewPoly()
+		pt[i] = C[i+1].CopyNew()
 		ringQ.MulCoeffsAndAdd(
 			S[i],
 			C[0],
 			pt[i],
 		)
-		ringQ.Add(
-			C[i+1],
-			pt[i],
-			pt[i],
-		)
+		ringQ.InvNTT(pt[i], pt[i])
 	}
 
-	fmt.Println(pt[0])
+	// x := ringQ.NewPoly()
+	// ringQ.DivRoundByLastModulusNTT(pt[0], x)
+	// ringQ.InvNTTLvl(1, x, x)
 
-	// gadget
-	// pt.Coeffs[0][0] *= ringQ.ModulusBigint
+	r := make([]*big.Int, len(pt[0].Coeffs[0]))
+	ringQ.PolyToBigintLvl(1, pt[0], r)
 
-	// R := make([]*ring.Poly, GSW_N1)
-	// P := [ - A \\ B ]
+	x := big.NewInt(0)
+	x.SetUint64(q_p)
 
-	fmt.Println(1)
+	d := big.NewInt(0)
 
-	// pt * G + P * X
+	d.Mod(r[0], x)
 
+	fmt.Println(r[0], d)
+
+	/*
+		for i := 0; i < len(r); i++ {
+
+			x := big.NewInt(0)
+			x.SetUint64(q_p)
+
+			d := big.NewInt(0)
+
+			d.Mod(r[i], x)
+
+			fmt.Println(r[i], d)
+		}
+	*/
+
+	/*
+
+		r := uint64(4000) // todo
+
+		for i := 0; i < len(pt[0].Coeffs); i++ {
+			c := pt[0].Coeffs[i]
+			m := ringQ.Modulus[i]
+			l := m / 2
+			for j := 0; j < len(c); j++ {
+
+				// map to absolute value
+				var v uint64
+				if c[j] > l {
+					v = m - c[j]
+				} else {
+					v = c[j]
+				}
+				fmt.Println("line", i, v, v/r)
+			}
+		}
+	*/
 }
 
 func pvw_high(ringQ *ring.Ring) {
