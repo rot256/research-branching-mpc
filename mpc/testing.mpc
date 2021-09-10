@@ -1,0 +1,14 @@
+def output(r):
+    f = ''
+    for _ in range(len(r)):
+        f += '%s '
+    f = f[:-1]
+    print_ln(f, *list(r))
+
+for i in range(100):
+    a = sint.get_input_from(0, size=2)
+    r = a.reveal()
+    output(r)
+    break_point()
+
+
