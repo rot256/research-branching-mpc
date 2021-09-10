@@ -28,9 +28,15 @@ func NewMPC(in io.Reader, out io.Writer, prime uint64) *MPC {
 	}
 }
 
+func try(err error) {
+	if err != nil {
+		fmt.Println("Failed:", err)
+		panic(err)
+	}
+}
+
 // input a value into the MPC
 func (m *MPC) Input(elems []uint64) error {
-
 	//
 	for i := 0; i < len(elems); i++ {
 		_, err := m.out.WriteString(
@@ -40,12 +46,22 @@ func (m *MPC) Input(elems []uint64) error {
 			return err
 		}
 	}
+	return nil
+}
 
+func (m *MPC) Round() error {
 	// terminate with newline
 	if _, err := m.out.WriteRune('\n'); err != nil {
 		return err
 	}
 	return m.out.Flush()
+}
+
+func (m *MPC) InputRound(elems []uint64) error {
+	if err := m.Input(elems); err != nil {
+		return err
+	}
+	return m.Round()
 }
 
 // read an output from the MPC
@@ -59,8 +75,6 @@ func (m *MPC) Output() ([]uint64, error) {
 	if strings.HasPrefix(m.in.Text(), INPUT_PROMPT) {
 		return m.Output()
 	}
-
-	fmt.Println(m.in.Text())
 
 	// split on space
 	split := strings.Split(m.in.Text(), " ")
@@ -110,24 +124,20 @@ func main() {
 	// wrap in MPC abstraction
 	mpc := NewMPC(stdout, stdin, 0xffffffffffffffc5)
 
-	n := []uint64{0x0, 0x1}
-	for i := 0; i < 100; i++ {
+	a := []uint64{0x0, 0x1}
+	b := []uint64{0x0, 0x1}
+	g := []uint64{0x1, 0x0}
 
-		if err := mpc.Input(n); err != nil {
-			fmt.Println("failed to provide input:", err)
-			panic(err)
-		}
+	try(mpc.Input(g))
+	try(mpc.Input(a))
+	try(mpc.Input(b))
+	mpc.Round()
 
-		fmt.Println("sent", n)
-
-		n, err = mpc.Output()
-		if err != nil {
-			panic(err)
-		}
-		n[0] += 1
-		n[1] += 1
-		fmt.Println(n)
+	n, err := mpc.Output()
+	if err != nil {
+		panic(err)
 	}
+	fmt.Println(n)
 
 	if err := cmd.Wait(); err != nil {
 		fmt.Println("error", err)

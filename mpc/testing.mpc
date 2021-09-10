@@ -1,3 +1,6 @@
+'''
+Output in a format consumable by the glue code.
+'''
 def output(r):
     f = ''
     for _ in range(len(r)):
@@ -5,10 +8,29 @@ def output(r):
     f = f[:-1]
     print_ln(f, *list(r))
 
-for i in range(100):
-    a = sint.get_input_from(0, size=2)
-    r = a.reveal()
-    output(r)
-    break_point()
+'''
+Programmable gate:
+
+g = 0:
+    Output is l * r
+
+g = 1:
+    Output is l + r
+
+For g \notin {0, 1}, the output is undefined.
+'''
+def universal(g, l, r):
+    assert len(g) == len(l)
+    assert len(g) == len(r)
+    o = sint([1] * len(l))
+    return (o - g) * (l + r) + (l * r * g)
+
+g = sint.get_input_from(0, size=2)
+a = sint.get_input_from(0, size=2)
+b = sint.get_input_from(0, size=2)
+o = universal(g, a, b)
+r = o.reveal()
+output(r)
+break_point()
 
 
