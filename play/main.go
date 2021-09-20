@@ -2,12 +2,14 @@ package main
 
 import (
 	"fmt"
+	"math/big"
+
 	"github.com/ldsec/lattigo/v2/ring"
 	"github.com/ldsec/lattigo/v2/utils"
-	"math/big"
 )
 
-const BIT_SIZE = 60
+const BIT_SIZE_P = 48
+const BIT_SIZE_Q = 60
 const LOG_N = 12
 const N = 1 << LOG_N
 const NUM_PRIMES = 2
@@ -17,6 +19,9 @@ const PVW_N1 = 20
 const PVW_K = 5
 const PVW_M = 5
 
+// p, q with p < q
+//
+
 // page 19
 const GSW_N0 = 2 // rows of B
 const GSW_N1 = 3 // rows of P = [ -A \\ B ]
@@ -24,6 +29,56 @@ const GSW_N2 = 3 // ?
 const GSW_K = 1  // rows of A
 
 const GSW_M2 = 6
+
+func encode(ringQ *ring.Ring, v []uint64) *ring.Poly {
+	poly := ringQ.NewPoly()
+
+	// check
+	if len(v) > len(poly.Coeffs) {
+		panic("invalid size during conversion")
+	}
+	if len(ringQ.Modulus) != 2 || ringQ.Modulus[0] >= ringQ.Modulus[1] {
+		panic("invalid ring")
+	}
+
+	// each coefficient is v[i] * q
+	p := ringQ.Modulus[0]
+	q := ringQ.Modulus[1]
+	q_mp := big.NewInt(0)
+	q_mp.SetUint64(q % p)
+	p_b := big.NewInt(0)
+	p_b.SetUint64(p)
+
+	for i := 0; i < len(v); i++ {
+		// w = (v[i] * (q mod p)) mod p
+		// w = v[i] * q mod p
+		w := big.NewInt(0)
+		w.SetUint64(v[i])
+		w.Mul(w, q_mp)
+		w.Mod(w, p_b)
+		poly.Coeffs[i][0] = w.Uint64()
+		poly.Coeffs[i][1] = 0
+	}
+	return poly
+}
+
+func decode(ringQ *ring.Ring, poly *ring.Poly) []uint64 {
+	v := make([]uint64, len(poly.Coeffs))
+
+	if poly.IsNTT {
+		panic("providing an NTT polynomial")
+
+	}
+
+	p := ringQ.Modulus[0]
+	q := ringQ.Modulus[1]
+
+	for i := 0; i < len(poly.Coeffs); i++ {
+		v[i] =
+	}
+
+	return v
+}
 
 func gsw(ringQ *ring.Ring) {
 	prng, err := utils.NewPRNG()
@@ -217,11 +272,21 @@ func main() {
 
 	// setup ring
 
-	primes := ring.GenerateNTTPrimes(
-		BIT_SIZE,
+	q := ring.GenerateNTTPrimes(
+		BIT_SIZE_Q,
 		2*N,
-		NUM_PRIMES,
+		1,
 	)
+
+	p := ring.GenerateNTTPrimes(
+		BIT_SIZE_P,
+		2*N,
+		1,
+	)
+
+	primes := []uint64{p[0], q[0]}
+
+	fmt.Println("primes: ", primes)
 
 	ringQ, err := ring.NewRing(N, primes)
 	if err != nil {
