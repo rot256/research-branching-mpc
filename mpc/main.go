@@ -16,7 +16,7 @@ func party_address(party int) string {
 }
 
 func party_port(party int) int {
-	return party + 4000
+	return party + 7000
 }
 
 type Connection struct {

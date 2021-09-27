@@ -48,12 +48,13 @@ func (m *MPC) Input(elems []uint64) error {
 }
 
 func (m *MPC) TryInput(elems []uint64) {
-	if err := m.Input(elems); err != nil {
+	if err := m.InputRound(elems); err != nil {
 		panic(err)
 	}
 }
 
 func (m *MPC) TryOutput(size int) []uint64 {
+	fmt.Println("Read output from MPC:", size)
 	res, err := m.Output(size)
 	if err != nil {
 		panic(err)
@@ -78,13 +79,12 @@ func (m *MPC) InputRound(elems []uint64) error {
 
 // read an output from the MPC
 func (m *MPC) Output(size int) ([]uint64, error) {
-	fmt.Println("Read output from MPC:", size)
 
 	// read line
 	if ok := m.in.Scan(); !ok {
 		return nil, errors.New("no output, EOF")
 	}
-	fmt.Println("AAAAA")
+	fmt.Println("Data:", m.in.Text())
 
 	// discard junk
 	if strings.HasPrefix(m.in.Text(), INPUT_PROMPT) {
