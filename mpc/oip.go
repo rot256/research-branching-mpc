@@ -1,8 +1,7 @@
 package main
 
 import (
-	"encoding/gob"
-	"io"
+	"fmt"
 
 	"github.com/ldsec/lattigo/v2/bfv"
 	"github.com/ldsec/lattigo/v2/rlwe"
@@ -11,16 +10,16 @@ import (
 const DIMENSION int = 1 << 12
 
 type MsgSetup struct {
-	pk  *rlwe.PublicKey
-	rlk *rlwe.RelinearizationKey
+	Pk  *rlwe.PublicKey
+	Rlk *rlwe.RelinearizationKey
 }
 
 type MsgReceiver struct {
-	cts []*bfv.Ciphertext
+	Cts []*bfv.Ciphertext
 }
 
 type MsgSender struct {
-	cts []*bfv.Ciphertext
+	Cts []*bfv.Ciphertext
 }
 
 func SetupParams() bfv.Parameters {
@@ -37,8 +36,7 @@ type OIP struct {
 	parties int // number of parties
 
 	// pipes
-	dec []*gob.Decoder
-	enc []*gob.Encoder
+	conn []Connection
 
 	// public keys of other parties
 	recv *Receiver
@@ -46,8 +44,7 @@ type OIP struct {
 }
 
 func NewIOP(
-	r []io.Reader,
-	w []io.Writer,
+	conn []Connection,
 	me,
 	parties int,
 ) (*OIP, error) {
@@ -55,32 +52,20 @@ func NewIOP(
 	oip.me = me
 	oip.parties = parties
 
-	// prepare encoders / decoders
-	oip.dec = make([]*gob.Decoder, len(r))
-	oip.enc = make([]*gob.Encoder, len(w))
-	for party := 0; party < parties; party++ {
-		if party == me {
-			oip.dec = append(oip.dec, nil)
-			oip.enc = append(oip.enc, nil)
-		} else {
-			oip.dec = append(oip.dec, gob.NewDecoder(r[party]))
-			oip.enc = append(oip.enc, gob.NewEncoder(w[party]))
-		}
-	}
-
 	// setup receivers
 	params := SetupParams()
 	oip.recv = NewReceiver(params)
+	oip.conn = conn
 
 	// send public key to every other party
 	for party := 0; party < parties; party++ {
 		if party == me {
 			continue
 		}
-		err := oip.enc[party].Encode(
+		err := oip.conn[party].Send(
 			MsgSetup{
-				pk:  oip.recv.pk,
-				rlk: oip.recv.rlk,
+				Pk:  oip.recv.pk,
+				Rlk: oip.recv.rlk,
 			},
 		)
 		if err != nil {
@@ -95,7 +80,7 @@ func NewIOP(
 			continue
 		}
 		var setup MsgSetup
-		if err := oip.dec[party].Decode(&setup); err != nil {
+		if err := oip.conn[party].Recv(&setup); err != nil {
 			return nil, err
 		}
 		oip.send = append(oip.send, NewSender(params, setup))
@@ -104,7 +89,9 @@ func NewIOP(
 	return oip, nil
 }
 
-func (oip *OIP) IOPMapping(mapping [][]int, b []uint64, v []uint64) ([]uint64, error) {
+func (oip *OIP) OIPMapping(mapping [][]int, b []uint64, v []uint64) ([]uint64, error) {
+	fmt.Println("OIPMapping")
+
 	if len(mapping) != len(b) || len(mapping) != len(v) {
 		panic("invalid dimension")
 	}
@@ -120,7 +107,7 @@ func (oip *OIP) IOPMapping(mapping [][]int, b []uint64, v []uint64) ([]uint64, e
 		if party == oip.me {
 			continue
 		}
-		if err := oip.enc[party].Encode(msg_recv); err != nil {
+		if err := oip.conn[party].Send(msg_recv); err != nil {
 			return nil, err
 		}
 	}
@@ -134,7 +121,7 @@ func (oip *OIP) IOPMapping(mapping [][]int, b []uint64, v []uint64) ([]uint64, e
 
 		// receive message from receiver
 		var msg1 MsgReceiver
-		if err := oip.dec[party].Decode(&msg1); err != nil {
+		if err := oip.conn[party].Recv(&msg1); err != nil {
 			return nil, err
 		}
 
@@ -146,7 +133,7 @@ func (oip *OIP) IOPMapping(mapping [][]int, b []uint64, v []uint64) ([]uint64, e
 		}
 
 		// create compressed ciphertext
-		msg2.cts = make([]*bfv.Ciphertext, blocks, blocks)
+		msg2.Cts = make([]*bfv.Ciphertext, blocks, blocks)
 		for branch := 0; branch < branches; branch++ {
 			// apply permutation and masking
 			m := mapping[branch]
@@ -165,19 +152,19 @@ func (oip *OIP) IOPMapping(mapping [][]int, b []uint64, v []uint64) ([]uint64, e
 				ct := bfv.NewCiphertext(oip.recv.params, DIMENSION)
 				pt_mul := bfv.NewPlaintextMul(oip.recv.params)
 				oip.send[party].encoder.EncodeUintMul(t[s:e], pt_mul)
-				oip.send[party].evaluator.Mul(msg1.cts[branch], pt_mul, ct)
+				oip.send[party].evaluator.Mul(msg1.Cts[branch], pt_mul, ct)
 
 				// add to  accumulation
-				if msg2.cts[i] == nil {
-					msg2.cts[i] = ct
+				if msg2.Cts[i] == nil {
+					msg2.Cts[i] = ct
 				} else {
-					oip.send[party].evaluator.Add(msg2.cts[i], ct, msg2.cts[i])
+					oip.send[party].evaluator.Add(msg2.Cts[i], ct, msg2.Cts[i])
 				}
 			}
 		}
 
 		// send response to receiver
-		if err := oip.enc[party].Encode(msg2); err != nil {
+		if err := oip.conn[party].Send(msg2); err != nil {
 			return nil, err
 		}
 	}
@@ -190,7 +177,7 @@ func (oip *OIP) IOPMapping(mapping [][]int, b []uint64, v []uint64) ([]uint64, e
 
 		// receieve message from sender
 		var msg_send MsgSender
-		if err := oip.dec[party].Decode(&msg_send); err != nil {
+		if err := oip.conn[party].Recv(&msg_send); err != nil {
 			return nil, err
 		}
 
@@ -203,7 +190,7 @@ func (oip *OIP) IOPMapping(mapping [][]int, b []uint64, v []uint64) ([]uint64, e
 
 			// descrypt block
 			pt_new := bfv.NewPlaintext(oip.recv.params)
-			oip.recv.decryptor.Decrypt(msg_send.cts[i], pt_new)
+			oip.recv.decryptor.Decrypt(msg_send.Cts[i], pt_new)
 			oip.recv.encoder.DecodeUint(pt_new, res[s:e])
 		}
 		res = res[:size]
@@ -217,8 +204,8 @@ func (oip *OIP) IOPMapping(mapping [][]int, b []uint64, v []uint64) ([]uint64, e
 	return share, nil
 }
 
-func (oip *OIP) TryIOPMapping(mapping [][]int, b []uint64, v []uint64) []uint64 {
-	res, err := oip.IOPMapping(mapping, b, v)
+func (oip *OIP) TryOIPMapping(mapping [][]int, b []uint64, v []uint64) []uint64 {
+	res, err := oip.OIPMapping(mapping, b, v)
 	if err != nil {
 		panic(err)
 	}

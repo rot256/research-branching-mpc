@@ -1,18 +1,57 @@
 package main
 
 import (
+	"encoding/gob"
 	"fmt"
+	"net"
 	"os"
+	"sort"
 	"strconv"
 
 	"os/exec"
 )
 
+func party_address(party int) string {
+	return "127.0.0.1:" + strconv.Itoa(party_port(party))
+}
+
+func party_port(party int) int {
+	return party + 4000
+}
+
+type Connection struct {
+	dec   *gob.Decoder
+	enc   *gob.Encoder
+	other int
+}
+
+func (c *Connection) Send(v interface{}) error {
+	return c.enc.Encode(v)
+}
+
+func (c *Connection) Recv(v interface{}) error {
+	return c.dec.Decode(v)
+}
+
 func main() {
 	fmt.Println("starting", os.Args[1:])
 
+	// find number of players
+	parties := func() int {
+		for i := 1; i < len(os.Args); i++ {
+			if os.Args[i] == "-N" || os.Args[i] == "--nparties" {
+				parties, err := strconv.Atoi(os.Args[i+1])
+				if err != nil {
+					panic(err)
+				}
+				return parties
+			}
+		}
+		panic("Parties not specified")
+	}()
+
 	// find which player
-	player := func() int {
+	me := func() int {
 		for i := 1; i < len(os.Args); i++ {
 			if os.Args[i] == "-p" || os.Args[i] == "--player" {
 				player, err := strconv.Atoi(os.Args[i+1])
@@ -25,7 +64,8 @@ func main() {
 		panic("Player not specified")
 	}()
 
-	fmt.Println("Player", player)
+	fmt.Println("Player:", me)
+	fmt.Println("Parties:", parties)
 
 	// pass arguments to MP-SPDZ command
 	cmd := exec.Command(os.Args[1], os.Args[2:]...)
@@ -52,22 +92,106 @@ func main() {
 	}
 
 	// wrap in MPC abstraction
-	mpc := NewMPC(stdout, stdin, 0xffffffffffffffc5)
+	mpc := NewMPC(stdout, stdin)
+	fmt.Println(mpc)
 
-	a := []uint64{0x0, 0x1}
-	b := []uint64{0x0, 0x1}
-	g := []uint64{0x1, 0x0}
-
-	try(mpc.Input(g))
-	try(mpc.Input(a))
-	try(mpc.Input(b))
-	mpc.Round()
-
-	n, err := mpc.Output()
+	addr_me, err := net.ResolveTCPAddr("tcp", ":"+strconv.Itoa(party_port(me)))
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(n)
+
+	conns := make(chan net.Conn)
+
+	// listen for connections
+	go func() {
+		ls, err := net.ListenTCP("tcp", addr_me)
+		if err != nil {
+			panic(err)
+		}
+		for {
+			conn, err := ls.Accept()
+			if err != nil {
+				panic(err)
+			}
+			conns <- conn
+		}
+	}()
+
+	// create TCP connections to higher parties
+	go func() {
+		for party := 0; party < parties; party++ {
+			if party > me {
+				// I must connect
+				addr, err := net.ResolveTCPAddr("tcp", party_address(party))
+				if err != nil {
+					panic(err)
+				}
+				conn, err := net.DialTCP("tcp", nil, addr)
+				if err != nil {
+					panic(err)
+				}
+				conns <- conn
+			}
+		}
+	}()
+
+	// get parties - 1 connections and identity
+	con := make([]Connection, 0, parties)
+	con = append(con, Connection{
+		enc:   nil,
+		dec:   nil,
+		other: me,
+	})
+	for i := 1; i < parties; i++ {
+		c := <-conns
+		fmt.Println("Connection:", i)
+		g := Connection{
+			enc: gob.NewEncoder(c),
+			dec: gob.NewDecoder(c),
+		}
+
+		// identity self
+		if err := g.Send(me); err != nil {
+			panic(err)
+		}
+
+		// get idenity of counterparty
+		var other int
+		if err := g.Recv(&other); err != nil {
+			panic(err)
+		}
+		g.other = other
+
+		con = append(con, g)
+	}
+
+	// sort connections after
+	sort.Slice(con, func(i, j int) bool {
+		return con[i].other < con[j].other
+	})
+
+	fmt.Println("Connections:", con)
+
+	oip, err := NewIOP(con, me, parties)
+	if err != nil {
+		panic(err)
+	}
+
+	inputs := []uint64{
+		0x0,
+		0x0,
+		0x0,
+		0x0,
+		0x0,
+		0x0,
+		0x0,
+		0x0,
+		0x0,
+		0x0,
+	}
+
+	// setup OIP protocol
+	run(me, inputs, mpc, oip)
 
 	if err := cmd.Wait(); err != nil {
 		fmt.Println("error", err)

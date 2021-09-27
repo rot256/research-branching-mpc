@@ -13,14 +13,12 @@ import (
 var INPUT_PROMPT = "Please input"
 
 type MPC struct {
-	p   uint64
 	in  *bufio.Scanner
 	out *bufio.Writer
 }
 
-func NewMPC(in io.Reader, out io.Writer, prime uint64) *MPC {
+func NewMPC(in io.Reader, out io.Writer) *MPC {
 	return &MPC{
-		p:   prime,
 		in:  bufio.NewScanner(in),
 		out: bufio.NewWriter(out),
 	}
@@ -35,6 +33,8 @@ func try(err error) {
 
 // input a value into the MPC
 func (m *MPC) Input(elems []uint64) error {
+	fmt.Println("Input values to MPC:", len(elems))
+
 	//
 	for i := 0; i < len(elems); i++ {
 		_, err := m.out.WriteString(
@@ -45,6 +45,20 @@ func (m *MPC) Input(elems []uint64) error {
 		}
 	}
 	return nil
+}
+
+func (m *MPC) TryInput(elems []uint64) {
+	if err := m.Input(elems); err != nil {
+		panic(err)
+	}
+}
+
+func (m *MPC) TryOutput(size int) []uint64 {
+	res, err := m.Output(size)
+	if err != nil {
+		panic(err)
+	}
+	return res
 }
 
 func (m *MPC) Round() error {
@@ -63,15 +77,18 @@ func (m *MPC) InputRound(elems []uint64) error {
 }
 
 // read an output from the MPC
-func (m *MPC) Output() ([]uint64, error) {
+func (m *MPC) Output(size int) ([]uint64, error) {
+	fmt.Println("Read output from MPC:", size)
+
 	// read line
 	if ok := m.in.Scan(); !ok {
 		return nil, errors.New("no output, EOF")
 	}
+	fmt.Println("AAAAA")
 
 	// discard junk
 	if strings.HasPrefix(m.in.Text(), INPUT_PROMPT) {
-		return m.Output()
+		return m.Output(size)
 	}
 
 	// split on space
@@ -86,6 +103,7 @@ func (m *MPC) Output() ([]uint64, error) {
 		}
 		elems[i] = n
 	}
+	fmt.Println(elems)
 	return elems, nil
 }
 

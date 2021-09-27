@@ -18,7 +18,6 @@ g = 1:
     Output is l + r
 
 For g \notin {0, 1}, the output is undefined.
-'''
 def universal(g, l, r):
     assert len(g) == len(l)
     assert len(g) == len(r)
@@ -30,7 +29,73 @@ a = sint.get_input_from(0, size=2)
 b = sint.get_input_from(0, size=2)
 o = universal(g, a, b)
 r = o.reveal()
+
+v = sint.get_random(size=6)
+f = v[3].reveal()
+
 output(r)
 break_point()
+'''
 
+w0 = sint.get_input_from(0, size=1)
+w1 = sint.get_input_from(0, size=1)
+w2 = sint.get_input_from(0, size=1)
+w3 = sint.get_input_from(1, size=1)
+w4 = sint.get_input_from(1, size=1)
+
+# pack selection wires
+s = sint.Array(size=2)
+s[0] = w3
+s[1] = w4
+
+# compute gate programming
+g = sint.Array(size=3)
+g[0] = s[1]
+g[1] = s[0]
+g[2] = 0
+
+# generate random exported sharing
+out = sint.get_input_from(0, size=6)
+out = out + sint.get_input_from(1, size=6)
+
+# import additive sharing (dim = 6)
+t0 = sint.get_input_from(0, size=6)
+t1 = sint.get_input_from(1, size=6)
+D = t0 + t1
+
+# pack outputs to the disjunction
+u    = cint.Array(size=6)
+u[0] = (out[0] + w0).reveal()
+u[1] = (out[1] + w1).reveal()
+u[2] = (out[2] + w2).reveal()
+
+# gate number 0
+l = -D[0]
+l = l + b[0] * u[0]
+l = l + b[1] * u[0]
+r = -D[1]
+r = r + b[0] * u[1]
+r = r + b[1] * u[1]
+z = (1 - g[0]) * (l + r) + g[0] * (l * r)
+u[3] = (z + out[3]).reveal()
+
+# gate number 1
+l = -D[2]
+l = l + b[0] * u[1]
+l = l + b[1] * u[1]
+r = -D[3]
+r = r + b[0] * u[2]
+r = r + b[1] * u[2]
+z = (1 - g[1]) * (l + r) + g[1] * (l * r)
+u[4] = (z + out[4]).reveal()
+
+# gate number 2
+l = -D[4]
+l = l + b[0] * u[3]
+l = l + b[1] * u[4]
+r = -D[5]
+r = r + b[0] * u[0]
+r = r + b[1] * u[1]
+z = (1 - g[2]) * (l + r) + g[2] * (l * r)
+u[5] = (z + out[5]).reveal()
 

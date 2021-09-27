@@ -1,0 +1,57 @@
+
+def output(r):
+    f = ''
+    for _ in range(len(r)):
+        f += '%s '
+    f = f[:-1]
+    print_ln(f, *list(r))
+w0 = sint.get_input_from(0, size=1)
+w1 = sint.get_input_from(0, size=1)
+w2 = sint.get_input_from(0, size=1)
+w3 = sint.get_input_from(1, size=1)
+w4 = sint.get_input_from(1, size=1)
+
+# pack selection wires
+b = sint.Array(size=2)
+b[0] = w3
+b[1] = w4
+
+# compute gate programming
+g = sint.Array(size=3)
+g[0] = b[1]
+g[1] = b[0]
+g[2] = 0
+t0 = sint.get_input_from(0, size=6)
+t1 = sint.get_input_from(1, size=6)
+out = t0 + t1
+t0 = sint.get_input_from(0, size=2)
+t1 = sint.get_input_from(1, size=2)
+t = t0 + t1
+output((b - t).reveal())
+t0 = sint.get_input_from(0, size=6)
+t1 = sint.get_input_from(1, size=6)
+D = t0 + t1
+
+# pack outputs to the disjunction
+u    = cint.Array(size=6)
+u[0] = (out[0] + w0).reveal()
+u[1] = (out[1] + w1).reveal()
+u[2] = (out[2] + w2).reveal()
+
+# gate number 0
+l = (b[0] * u[0]) + (b[1] * u[0]) - D[0]
+r = (b[0] * u[1]) + (b[1] * u[1]) - D[1]
+z = (1 - g[0]) * (l + r) + g[0] * (l * r)
+u[3] = (z + out[3]).reveal()
+
+# gate number 1
+l = (b[0] * u[1]) + (b[1] * u[1]) - D[2]
+r = (b[0] * u[2]) + (b[1] * u[2]) - D[3]
+z = (1 - g[1]) * (l + r) + g[1] * (l * r)
+u[4] = (z + out[4]).reveal()
+
+# gate number 2
+l = (b[0] * u[3]) + (b[1] * u[4]) - D[4]
+r = (b[0] * u[0]) + (b[1] * u[1]) - D[5]
+z = (1 - g[2]) * (l + r) + g[2] * (l * r)
+u[5] = (z + out[5]).reveal()

@@ -20,7 +20,7 @@ func random(size int) []uint64 {
 	for i := 0; i < size; i++ {
 		s := i * 8
 		e := (i + 1) * 8
-		nums = append(nums, binary.LittleEndian.Uint64(bs[s:e]))
+		nums = append(nums, binary.LittleEndian.Uint64(bs[s:e])%PRIME)
 	}
 	return nums
 }

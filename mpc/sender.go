@@ -15,8 +15,8 @@ type Sender struct {
 
 func NewSender(params bfv.Parameters, msg MsgSetup) *Sender {
 	encoder := bfv.NewEncoder(params)
-	encryptor := bfv.NewEncryptor(params, msg.pk)
-	evaluator := bfv.NewEvaluator(params, rlwe.EvaluationKey{Rlk: msg.rlk})
+	encryptor := bfv.NewEncryptor(params, msg.Pk)
+	evaluator := bfv.NewEvaluator(params, rlwe.EvaluationKey{Rlk: msg.Rlk})
 	return &Sender{
 		encoder:   encoder,
 		encryptor: encryptor,

@@ -49,6 +49,6 @@ func (recv *Receiver) NewSelection(s []uint64) *MsgReceiver {
 	}
 
 	return &MsgReceiver{
-		cts: cts,
+		Cts: cts,
 	}
 }
