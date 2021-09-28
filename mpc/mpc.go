@@ -11,6 +11,7 @@ import (
 )
 
 var INPUT_PROMPT = "Please input"
+var OUTPUT_PROMPT = "Output: "
 
 type MPC struct {
 	in  *bufio.Scanner
@@ -21,13 +22,6 @@ func NewMPC(in io.Reader, out io.Writer) *MPC {
 	return &MPC{
 		in:  bufio.NewScanner(in),
 		out: bufio.NewWriter(out),
-	}
-}
-
-func try(err error) {
-	if err != nil {
-		fmt.Println("Failed:", err)
-		panic(err)
 	}
 }
 
@@ -79,31 +73,40 @@ func (m *MPC) InputRound(elems []uint64) error {
 
 // read an output from the MPC
 func (m *MPC) Output(size int) ([]uint64, error) {
-
-	// read line
-	if ok := m.in.Scan(); !ok {
-		return nil, errors.New("no output, EOF")
-	}
-	fmt.Println("Data:", m.in.Text())
-
-	// discard junk
-	if strings.HasPrefix(m.in.Text(), INPUT_PROMPT) {
-		return m.Output(size)
-	}
-
-	// split on space
-	split := strings.Split(m.in.Text(), " ")
-
-	// convert each element from string to uint64
-	elems := make([]uint64, len(split))
-	for i := 0; i < len(split); i++ {
-		n, err := strconv.ParseUint(split[i], 10, 64)
-		if err != nil {
-			return nil, err
+	elems := make([]uint64, 0, size)
+	for len(elems) < size {
+		// read line
+		if ok := m.in.Scan(); !ok {
+			return nil, errors.New("no output, EOF")
 		}
-		elems[i] = n
+
+		fmt.Println("Data:", m.in.Text())
+
+		// discard junk
+		if strings.HasPrefix(m.in.Text(), OUTPUT_PROMPT) {
+			// split on space
+			line := m.in.Text()[len(OUTPUT_PROMPT):]
+			split := strings.Split(line, " ")
+
+			// convert each element from string to uint64
+			for i := 0; i < len(split); i++ {
+				n, err := strconv.ParseInt(split[i], 10, 64)
+				if err != nil {
+					return nil, err
+				}
+				if n < 0 {
+					n += int64(PRIME)
+				}
+				elems = append(elems, uint64(n))
+			}
+		}
+
 	}
-	fmt.Println(elems)
+
+	if len(elems) != size {
+		panic("too many elements")
+	}
+	fmt.Println("Elems:", elems)
 	return elems, nil
 }
 

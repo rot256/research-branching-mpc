@@ -89,10 +89,34 @@ func NewIOP(
 	return oip, nil
 }
 
+func broadcast(me int, msgs []interface{}, conn []Connection) chan error {
+
+	if len(msgs) != len(conn) {
+		panic("len(msgs) != len(conn)")
+	}
+
+	sig_send := make(chan error)
+	go func() {
+		for party := 0; party < len(conn); party++ {
+			if party == me {
+				continue
+			}
+			if err := conn[party].Send(msgs[party]); err != nil {
+				sig_send <- err
+				return
+			}
+		}
+		sig_send <- nil
+	}()
+
+	return sig_send
+}
+
 func (oip *OIP) OIPMapping(mapping [][]int, b []uint64, v []uint64) ([]uint64, error) {
 	fmt.Println("OIPMapping")
 
-	if len(mapping) != len(b) || len(mapping) != len(v) {
+	if len(mapping) != len(b) || len(mapping[0]) != len(v) {
+		fmt.Println(mapping, b, v)
 		panic("invalid dimension")
 	}
 
@@ -103,16 +127,21 @@ func (oip *OIP) OIPMapping(mapping [][]int, b []uint64, v []uint64) ([]uint64, e
 
 	// send first message
 	msg_recv := oip.recv.NewSelection(b)
-	for party := 0; party < oip.parties; party++ {
-		if party == oip.me {
-			continue
-		}
-		if err := oip.conn[party].Send(msg_recv); err != nil {
-			return nil, err
-		}
-	}
+	sig_send := broadcast(
+		oip.me,
+		func() []interface{} {
+			msgs := make([]interface{}, oip.parties)
+			for party := 0; party < oip.parties; party++ {
+				msgs[party] = msg_recv
+			}
+			return msgs
+		}(),
+		oip.conn,
+	)
 
 	// act as sender
+	fmt.Println("Act as sender")
+	msgs2 := make([]MsgSender, 0, oip.parties)
 	share := make([]uint64, size, size)
 	for party := 0; party < oip.parties; party++ {
 		if party == oip.me {
@@ -129,7 +158,7 @@ func (oip *OIP) OIPMapping(mapping [][]int, b []uint64, v []uint64) ([]uint64, e
 		var msg2 MsgSender
 		x := random(size)
 		for i := 0; i < len(x); i++ {
-			share[i] = (share[i] + x[i]) % PRIME
+			share[i] = sub(share[i], x[i])
 		}
 
 		// create compressed ciphertext
@@ -139,7 +168,7 @@ func (oip *OIP) OIPMapping(mapping [][]int, b []uint64, v []uint64) ([]uint64, e
 			m := mapping[branch]
 			t := make([]uint64, pad_size, pad_size)
 			for i := 0; i < size; i++ {
-				t[i] = (x[i] + v[m[i]]) % PRIME
+				t[i] = add(x[i], v[m[i]])
 			}
 
 			// accumulate in ciphertext
@@ -163,11 +192,25 @@ func (oip *OIP) OIPMapping(mapping [][]int, b []uint64, v []uint64) ([]uint64, e
 			}
 		}
 
-		// send response to receiver
-		if err := oip.conn[party].Send(msg2); err != nil {
-			return nil, err
-		}
+		msgs2 = append(msgs2, msg2)
 	}
+
+	// send response to receiver
+	fmt.Println("wait")
+	if err := <-sig_send; err != nil {
+		return nil, err
+	}
+	sig_send = broadcast(
+		oip.me,
+		func() []interface{} {
+			msgs := make([]interface{}, oip.parties)
+			for party := 0; party < oip.parties; party++ {
+				msgs[party] = msgs2[party]
+			}
+			return msgs
+		}(),
+		oip.conn,
+	)
 
 	// act as receiver
 	for party := 0; party < oip.parties; party++ {
@@ -201,6 +244,9 @@ func (oip *OIP) OIPMapping(mapping [][]int, b []uint64, v []uint64) ([]uint64, e
 		}
 	}
 
+	if err := <-sig_send; err != nil {
+		return nil, err
+	}
 	return share, nil
 }
 

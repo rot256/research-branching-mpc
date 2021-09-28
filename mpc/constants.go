@@ -5,7 +5,20 @@ import (
 	"encoding/binary"
 )
 
+const TCP_BUFFER int = 1 << 16
 const PRIME uint64 = 65537
+
+func inv(v uint64) uint64 {
+	return PRIME - v
+}
+
+func add(v1, v2 uint64) uint64 {
+	return (v1 + v2) % PRIME
+}
+
+func sub(v1, v2 uint64) uint64 {
+	return add(v1, inv(v2))
+}
 
 func random(size int) []uint64 {
 	// read random bytes
@@ -16,7 +29,7 @@ func random(size int) []uint64 {
 	}
 
 	// convert to uint64
-	nums := make([]uint64, size)
+	nums := make([]uint64, 0, size)
 	for i := 0; i < size; i++ {
 		s := i * 8
 		e := (i + 1) * 8

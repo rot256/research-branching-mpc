@@ -26,6 +26,7 @@ type Connection struct {
 }
 
 func (c *Connection) Send(v interface{}) error {
+	fmt.Println("Send:", v)
 	return c.enc.Encode(v)
 }
 
@@ -109,7 +110,8 @@ func main() {
 			panic(err)
 		}
 		for {
-			conn, err := ls.Accept()
+			conn, err := ls.AcceptTCP()
+			conn.SetReadBuffer(TCP_BUFFER)
 			if err != nil {
 				panic(err)
 			}
@@ -127,6 +129,7 @@ func main() {
 					panic(err)
 				}
 				conn, err := net.DialTCP("tcp", nil, addr)
+				conn.SetReadBuffer(TCP_BUFFER)
 				if err != nil {
 					panic(err)
 				}
