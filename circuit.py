@@ -10,7 +10,7 @@ def wires(vs):
     return [wire(i) for i in vs]
 
 CIRCUIT_PREAMBLE = '''def output(r):
-    f = ''
+    f = 'Output: '
     for _ in range(len(r)):
         f += '%s '
     f = f[:-1]
@@ -170,7 +170,7 @@ class Ctx:
         ))
         self.prog('if player == 0 {')
         self.prog('    for i := 0; i < {size}; i++ {{'.format(size=size))
-        self.prog('        {elem}[i] = ({elem}[i] + {tmp}[i]) % PRIME'.format(
+        self.prog('        {elem}[i] = add({elem}[i], {tmp}[i])'.format(
             elem=elem,
             tmp=tmp,
         ))
@@ -185,6 +185,7 @@ class Ctx:
         self.prog('}')
 
     def additive_input(self, name, size):
+        # obtain sharings from each player
         for p in range(self.players):
             self.circ(
                 't{player} = sint.get_input_from({player}, size={size})'.format(
@@ -193,6 +194,10 @@ class Ctx:
                 )
             )
 
+        # runner inputs the shares
+        self.prog('mpc.TryInput({name})'.format(name=name))
+
+        # add sharings
         mask = ' + '.join(['t{player}'.format(player=p) for p in range(self.players)])
         self.circ(
             '{name} = {mask}'.format(
@@ -200,7 +205,6 @@ class Ctx:
                 mask=mask
             )
         )
-        self.prog('mpc.TryInput({name})'.format(name=name))
 
     def additive_random(self, name, size):
         # each player picks a bunch of random integers
@@ -364,13 +368,15 @@ if __name__ == '__main__':
     runner  = sys.argv[2] if len(sys.argv) > 2 else None
 
     p = [
-        Input(0),
-        Input(0),
-        Input(0),
-        Input(1),
-        Input(1)
+        Input(0), #0
+        Input(0), #1
+        Input(0), #2
+        Input(1), #3
+        Input(1)  #4
     ]
 
+    a = [Add(2, 0)]
+    b = [Add(4, 1)]
     a = [Add(0, 1), Mul(1, 2), Add(5, 0)]
     b = [Mul(0, 1), Add(1, 2), Add(6, 1)]
 

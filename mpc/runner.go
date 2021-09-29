@@ -34,7 +34,7 @@ mpc.TryInput(t)
 b := mpc.TryOutput(2)
 if player == 0 {
     for i := 0; i < 2; i++ {
-        b[i] = (b[i] + t[i]) % PRIME
+        b[i] = add(b[i], t[i])
     }
 } else {
     for i := 0; i < 2; i++ {

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/ldsec/lattigo/v2/bfv"
 	"github.com/ldsec/lattigo/v2/rlwe"
 )
@@ -44,6 +46,7 @@ func (recv *Receiver) NewSelection(s []uint64) *MsgReceiver {
 			org[j] = s[i]
 		}
 		cts[i] = bfv.NewCiphertext(recv.params, DIMENSION)
+		fmt.Println("degree:", cts[i].Degree(), len(cts[i].Ciphertext.Value))
 		recv.encoder.EncodeUint(org, pt)
 		recv.encryptor.Encrypt(pt, cts[i])
 	}

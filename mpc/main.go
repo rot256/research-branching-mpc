@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -20,9 +20,46 @@ func party_port(party int) int {
 }
 
 type Connection struct {
-	dec   *gob.Decoder
-	enc   *gob.Encoder
+	/*
+		dec   *gob.Decoder
+		enc   *gob.Encoder
+	*/
+	dec *json.Decoder
+	enc *json.Encoder
+	/*
+		dec   *cbor.Decoder
+		enc   *cbor.Encoder
+	*/
 	other int
+}
+
+func MeConnection(me int) Connection {
+	return Connection{
+		dec:   nil,
+		enc:   nil,
+		other: me,
+	}
+}
+
+func NewConnection(conn net.Conn, me int) (Connection, error) {
+	c := Connection{
+		/*
+			dec:   cbor.NewDecoder(conn),
+			enc:   cbor.NewEncoder(conn),
+		*/
+		dec:   json.NewDecoder(conn),
+		enc:   json.NewEncoder(conn),
+		other: 0,
+	}
+
+	// identity peers
+	if err := c.Send(me); err != nil {
+		return c, err
+	}
+	if err := c.Recv(&c.other); err != nil {
+		return c, err
+	}
+	return c, nil
 }
 
 func (c *Connection) Send(v interface{}) error {
@@ -140,31 +177,14 @@ func main() {
 
 	// get parties - 1 connections and identity
 	con := make([]Connection, 0, parties)
-	con = append(con, Connection{
-		enc:   nil,
-		dec:   nil,
-		other: me,
-	})
+	con = append(con, MeConnection(me))
 	for i := 1; i < parties; i++ {
 		c := <-conns
 		fmt.Println("Connection:", i)
-		g := Connection{
-			enc: gob.NewEncoder(c),
-			dec: gob.NewDecoder(c),
-		}
-
-		// identity self
-		if err := g.Send(me); err != nil {
+		g, err := NewConnection(c, me)
+		if err != nil {
 			panic(err)
 		}
-
-		// get idenity of counterparty
-		var other int
-		if err := g.Recv(&other); err != nil {
-			panic(err)
-		}
-		g.other = other
-
 		con = append(con, g)
 	}
 
@@ -180,18 +200,28 @@ func main() {
 		panic(err)
 	}
 
-	inputs := []uint64{
-		0x0,
-		0x0,
-		0x0,
-		0x0,
-		0x0,
-		0x0,
-		0x0,
-		0x0,
-		0x0,
-		0x0,
-	}
+	inputs := func() []uint64 {
+
+		if me == 0 {
+			inputs := []uint64{
+				0x0,
+				0x0,
+				0x0,
+			}
+			return inputs
+		}
+
+		if me == 1 {
+			inputs := []uint64{
+				0x0,
+				0x1,
+			}
+			return inputs
+
+		}
+		return nil
+
+	}()
 
 	// setup OIP protocol
 	run(me, inputs, mpc, oip)

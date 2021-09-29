@@ -3,10 +3,17 @@ package main
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"math/bits"
 )
 
 const TCP_BUFFER int = 1 << 16
 const PRIME uint64 = 65537
+
+func init() {
+	if bits.Len64(PRIME) > 31 {
+		panic("prime too large")
+	}
+}
 
 func inv(v uint64) uint64 {
 	return PRIME - v
@@ -18,6 +25,10 @@ func add(v1, v2 uint64) uint64 {
 
 func sub(v1, v2 uint64) uint64 {
 	return add(v1, inv(v2))
+}
+
+func mul(v1, v2 uint64) uint64 {
+	return (v1 * v2) % PRIME
 }
 
 func random(size int) []uint64 {

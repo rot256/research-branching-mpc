@@ -27,7 +27,7 @@ func NewMPC(in io.Reader, out io.Writer) *MPC {
 
 // input a value into the MPC
 func (m *MPC) Input(elems []uint64) error {
-	fmt.Println("Input values to MPC:", len(elems))
+	fmt.Println("Input values to MPC:", elems)
 
 	//
 	for i := 0; i < len(elems); i++ {
