@@ -32,6 +32,11 @@ class Input(Gate):
         self.dim = dim
         self.player = player
 
+class Output(Gate):
+    def __init__(self, wire, dim=1):
+        self.wire = wire
+        self.dim = dim
+
 class Mul(Gate):
     def __init__(self, l: int, r: int):
         self.l = l
@@ -101,6 +106,7 @@ class Disjunction(Gate):
 
         self.progs = []
         self.perms = []
+        self.gate_wires = [wire(i) for i in range(start, end)]
         self.disj_inputs = ext
 
         for branch in self.branches:
@@ -122,8 +128,8 @@ class Disjunction(Gate):
 
     def __init__(
         self,
-        selector: list[int],       # selector wire
-        branches: list[list[Gate]] # branches
+        selector,
+        branches,
     ):
         assert len(selector) == len(branches)
 
@@ -221,10 +227,11 @@ class Ctx:
     def prog(self, l=''):
         self.runner.append(l)
 
-    def compile(self, gates: list[Gate]):
+    def compile(self, gates):
         self.prog('package main')
         self.prog('')
-        self.prog('func run(player  int, inputs []uint64, mpc *MPC, oip *OIP) {')
+        self.prog('func run(player  int, inputs []uint64, mpc *MPC, oip *OIP) []uint64 {')
+        self.prog('output := make([]uint64, 0, 128)')
         self.prog('nxt := 0')
         for (w, g) in enumerate(gates):
             if isinstance(g, Input):
@@ -241,6 +248,14 @@ class Ctx:
                 self.prog('    mpc.TryInput([]uint64{inputs[nxt]})')
                 self.prog('    nxt += 1')
                 self.prog('}')
+
+            elif isinstance(g, Output):
+                self.circ('output({wire}.reveal())'.format(
+                    wire=wire(g.wire)
+                ))
+                self.prog('output = append(output, mpc.TryOutput({dim})...)'.format(
+                    dim=g.dim
+                ))
 
             elif isinstance(g, Mul):
                 self.circuit.append(
@@ -335,10 +350,12 @@ class Ctx:
                             idx=w
                         ))
 
-                    self.circ('z = (1 - g[{num}]) * (l + r) + g[{num}] * (l * r)'.format(
+                    self.circ('{wire} = (1 - g[{num}]) * (l + r) + g[{num}] * (l * r)'.format(
+                        wire=g.gate_wires[i],
                         num=i
                     ))
-                    self.circ('u[{next_idx}] = (z + out[{next_idx}]).reveal()'.format(
+                    self.circ('u[{next_idx}] = ({wire} + out[{next_idx}]).reveal()'.format(
+                        wire=g.gate_wires[i],
                         next_idx=next_idx
                     ))
                     next_idx += 1
@@ -350,6 +367,7 @@ class Ctx:
             else:
                 assert False
 
+        self.prog('return output')
         self.prog('}')
 
 def export(name, ls):
@@ -360,6 +378,46 @@ def export(name, ls):
         with open(name, 'w') as f:
             f.write(s)
 
+def split(prog):
+    out = []
+    disj = []
+    for gate in prog:
+        if isinstance(gate, tuple):
+            disj.append(gate)
+
+        else:
+            if disj:
+                wires = disj[0]
+                branches = list(zip(*disj[1:]))
+                out.append(
+                    Disjunction(
+                        wires,
+                        branches
+                    )
+                )
+                disj = []
+            out.append(gate)
+    return out
+
+import random
+
+def random_circuit(wires, start, length=4096):
+    out = []
+    wires = list(wires)
+    for i in range(length):
+        left   = random.choice(wires)
+        right  = random.choice(wires)
+        choice = random.randrange(2)
+        if choice == 0:
+            out.append(Add(left, right))
+        if choice == 1:
+            out.append(Mul(left, right))
+        wires.append(i + start)
+    return out
+
+def random_disj(sel, wires, start, length=4096):
+    return Disjunction(sel, [random_circuit(wires, start, length) for _ in range(len(sel))])
+
 if __name__ == '__main__':
 
     import sys
@@ -367,24 +425,41 @@ if __name__ == '__main__':
     circuit = sys.argv[1] if len(sys.argv) > 1 else None
     runner  = sys.argv[2] if len(sys.argv) > 2 else None
 
-    p = [
+    length = 256
+    branches = 2
+    parties = 2
+
+    '''
+    prog = split([
         Input(0), #0
         Input(0), #1
         Input(0), #2
         Input(1), #3
-        Input(1)  #4
+        Input(1), #4
+        (3, 4),
+        (Add(0, 1), Mul(0, 1)), #4
+        (Mul(1, 2), Add(1, 2)), #5
+        (Add(5, 0), Add(6, 1)), #7
+        Output(7)
+    ])
+    '''
+
+    prog = [
+        Input(0), #0
+        Input(0), #1
+        Input(0), #2
+        Input(1), #3
+        Input(1), #4
+        Input(1), #5
+        Input(1), #6
     ]
 
-    a = [Add(2, 0)]
-    b = [Add(4, 1)]
-    a = [Add(0, 1), Mul(1, 2), Add(5, 0)]
-    b = [Mul(0, 1), Add(1, 2), Add(6, 1)]
+    sel = list(range(3, 3+branches))
+    prog.append(random_disj(sel, wires=list(range(len(prog))), start=len(prog), length=length))
+    prog.append(Output(len(prog)))
 
-    disj = Disjunction([3, 4], [a, b])
-
-
-    ctx = Ctx(2, prime=65537)
-    ctx.compile(p + [disj])
+    ctx = Ctx(parties, prime=65537)
+    ctx.compile(prog)
 
     export(circuit, ctx.circuit)
     export(runner, ctx.runner)

@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"sort"
 	"strconv"
-
-	"os/exec"
 )
 
 func party_address(party int) string {
@@ -24,12 +23,14 @@ type Connection struct {
 		dec   *gob.Decoder
 		enc   *gob.Encoder
 	*/
-	dec *json.Decoder
-	enc *json.Encoder
 	/*
+			dec *json.Decoder
+			enc *json.Encoder
 		dec   *cbor.Decoder
 		enc   *cbor.Encoder
 	*/
+	dec   *json.Decoder
+	enc   *json.Encoder
 	other int
 }
 
@@ -44,8 +45,10 @@ func MeConnection(me int) Connection {
 func NewConnection(conn net.Conn, me int) (Connection, error) {
 	c := Connection{
 		/*
-			dec:   cbor.NewDecoder(conn),
-			enc:   cbor.NewEncoder(conn),
+			dec: cbor.NewDecoder(conn),
+			enc: cbor.NewEncoder(conn),
+				dec:   json.NewDecoder(conn),
+				enc:   json.NewEncoder(conn),
 		*/
 		dec:   json.NewDecoder(conn),
 		enc:   json.NewEncoder(conn),
@@ -201,35 +204,24 @@ func main() {
 	}
 
 	inputs := func() []uint64 {
-
-		if me == 0 {
-			inputs := []uint64{
-				0x0,
-				0x0,
-				0x0,
-			}
-			return inputs
-		}
-
 		if me == 1 {
-			inputs := []uint64{
-				0x0,
-				0x1,
-			}
+			inputs := make([]uint64, 100)
+			inputs[0] = 0x1
 			return inputs
-
 		}
-		return nil
 
+		return random(100)
 	}()
 
 	// setup OIP protocol
-	run(me, inputs, mpc, oip)
+	output := run(me, inputs, mpc, oip)
 
 	if err := cmd.Wait(); err != nil {
 		fmt.Println("error", err)
 		panic(err)
 	}
+
+	fmt.Println("Output:", output)
 
 	// os.Args[0]
 	return

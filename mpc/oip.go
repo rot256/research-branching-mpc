@@ -1,8 +1,8 @@
 package main
 
 import (
-	"encoding/gob"
 	"fmt"
+	"sync"
 
 	"github.com/ldsec/lattigo/v2/bfv"
 	"github.com/ldsec/lattigo/v2/ring"
@@ -43,12 +43,6 @@ type OIP struct {
 	// public keys of other parties
 	recv *Receiver
 	send []*Sender
-}
-
-func init() {
-	gob.Register(bfv.Ciphertext{})
-	gob.Register(rlwe.PublicKey{})
-	gob.Register(rlwe.RelinearizationKey{})
 }
 
 func NewIOP(
@@ -97,6 +91,32 @@ func NewIOP(
 	return oip, nil
 }
 
+func recv_broadcast(me int, msgs []interface{}, conn []Connection) error {
+	if len(msgs) != len(conn) {
+		panic("len(msgs) != len(conn)")
+	}
+
+	// do all sending in parallel
+	parallel := make(chan error, len(conn))
+	for party := 0; party < len(conn); party++ {
+		go func(party int) {
+			if party == me {
+				parallel <- nil
+				return
+			}
+			parallel <- conn[party].Recv(msgs[party])
+		}(party)
+	}
+
+	// aggregate errors
+	for i := 0; i < len(conn); i++ {
+		if err := <-parallel; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func broadcast(me int, msgs []interface{}, conn []Connection) chan error {
 
 	if len(msgs) != len(conn) {
@@ -105,11 +125,21 @@ func broadcast(me int, msgs []interface{}, conn []Connection) chan error {
 
 	sig_send := make(chan error)
 	go func() {
+		// do all sending in parallel
+		parallel := make(chan error, len(conn))
 		for party := 0; party < len(conn); party++ {
-			if party == me {
-				continue
-			}
-			if err := conn[party].Send(msgs[party]); err != nil {
+			go func(party int) {
+				if party == me {
+					parallel <- nil
+					return
+				}
+				parallel <- conn[party].Send(msgs[party])
+			}(party)
+		}
+
+		// aggregate errors
+		for i := 0; i < len(conn); i++ {
+			if err := <-parallel; err != nil {
 				sig_send <- err
 				return
 			}
@@ -192,8 +222,14 @@ func (oip *OIP) OIPMapping(mapping [][]int, b []uint64, v []uint64) ([]uint64, e
 	// v = []uint64{1, 2, 3, 4, 5, 6}
 	fmt.Println("OIPMapping, v:", v, "b:", b)
 
-	if len(mapping) != len(b) || len(mapping[0]) != len(v) {
+	if len(mapping) != len(b) {
 		fmt.Println(mapping, b, v)
+		fmt.Println(
+			"len(mapping) =", len(mapping),
+			"len(mapping[0]) =", len(mapping[0]),
+			"len(b) =", len(b),
+			"len(v) =", len(v),
+		)
 		panic("invalid dimension")
 	}
 
@@ -227,74 +263,113 @@ func (oip *OIP) OIPMapping(mapping [][]int, b []uint64, v []uint64) ([]uint64, e
 		}
 	}
 
+	msgs1 := make([]MsgReceiver, oip.parties)
+	msgs2 := make([]MsgSender, oip.parties)
+	recv_broadcast(
+		oip.me,
+		func() []interface{} {
+			msgs := make([]interface{}, oip.parties)
+			for party := 0; party < oip.parties; party++ {
+				msgs[party] = &msgs1[party]
+			}
+			return msgs
+		}(),
+		oip.conn,
+	)
+
 	// act as sender
 	fmt.Println("Act as sender")
-	msgs2 := make([]MsgSender, 0, oip.parties)
+	var share_mx sync.Mutex
+	var wg sync.WaitGroup
 	for party := 0; party < oip.parties; party++ {
-		if party == oip.me {
-			msgs2 = append(msgs2, MsgSender{})
-			continue
-		}
-
-		// receive message from receiver
-		var msg1 MsgReceiver
-		if err := oip.conn[party].Recv(&msg1); err != nil {
-			return nil, err
-		}
-
-		//
-		var msg2 MsgSender
-		// x := random(pad_size)
-		x := make([]uint64, pad_size)
-		for i := 0; i < len(share); i++ {
-			share[i] = sub(share[i], x[i])
-		}
-
-		fmt.Println("Party:", party, "x:", x[:size])
-
-		// create compressed ciphertext
-		msg2.Cts = make([]*bfv.Ciphertext, blocks, blocks)
-
-		// add random mask
-		for i := 0; i < blocks; i++ {
-			s := i * DIMENSION
-			e := (i + 1) * DIMENSION
-			pt_mask := bfv.NewPlaintext(oip.recv.params)
-			msg2.Cts[i] = bfv.NewCiphertext(oip.recv.params, DIMENSION)
-			oip.send[party].encoder.EncodeUint(x[s:e], pt_mask)
-			oip.send[party].evaluator.Add(msg2.Cts[i], pt_mask, msg2.Cts[i])
-		}
-
-		//
-		for branch := 0; branch < branches; branch++ {
-			// apply permutation and masking
-			m := mapping[branch]
-			t := make([]uint64, pad_size)
-			for i := 0; i < size; i++ {
-				t[i] = v[m[i]]
+		wg.Add(1)
+		go func(party int) {
+			defer wg.Done()
+			if party == oip.me {
+				return
 			}
 
-			fmt.Println("Branch:", branch, "t:", t[:size])
+			var ct_mx sync.Mutex
+			var lc_wg sync.WaitGroup
 
-			// accumulate in ciphertext
+			msg1 := &msgs1[party]
+			msg2 := &msgs2[party]
+
+			//
+			x := random(pad_size)
+			share_mx.Lock()
+			for i := 0; i < len(share); i++ {
+				share[i] = sub(share[i], x[i])
+			}
+			share_mx.Unlock()
+
+			fmt.Println("Party:", party, "x:", x[:size])
+
+			// create ciphertexts
+			msg2.Cts = make([]*bfv.Ciphertext, blocks, blocks)
 			for i := 0; i < blocks; i++ {
-				// start and end of block
-				s := i * DIMENSION
-				e := (i + 1) * DIMENSION
-
-				// multiply choice by message
-				ct := bfv.NewCiphertext(oip.recv.params, DIMENSION)
-				pt_mul := bfv.NewPlaintextMul(oip.recv.params)
-				oip.send[party].encoder.EncodeUintMul(t[s:e], pt_mul)
-
-				// add to  accumulation
-				oip.send[party].evaluator.Mul(msg1.Cts[branch], pt_mul, ct)
-				oip.send[party].evaluator.Add(msg2.Cts[i], ct, msg2.Cts[i])
+				msg2.Cts[i] = bfv.NewCiphertext(oip.recv.params, DIMENSION)
 			}
-		}
 
-		msgs2 = append(msgs2, msg2)
+			// add random masks
+			for i := 0; i < blocks; i++ {
+				lc_wg.Add(1)
+				go func(i int, party int) {
+					fmt.Println("job")
+					defer lc_wg.Done()
+
+					s := i * DIMENSION
+					e := (i + 1) * DIMENSION
+					pt_mask := bfv.NewPlaintext(oip.recv.params)
+					oip.send[party].encoder.EncodeUint(x[s:e], pt_mask)
+
+					ct_mx.Lock()
+					oip.send[party].evaluator.Add(msg2.Cts[i], pt_mask, msg2.Cts[i])
+					ct_mx.Unlock()
+				}(i, party)
+			}
+
+			//
+			for branch := 0; branch < branches; branch++ {
+				// apply permutation and masking
+				m := mapping[branch]
+				t := make([]uint64, pad_size)
+				for i := 0; i < size; i++ {
+					t[i] = v[m[i]]
+				}
+
+				fmt.Println("Branch:", branch, "t:", t[:size])
+
+				// accumulate in ciphertext
+				for i := 0; i < blocks; i++ {
+					lc_wg.Add(1)
+					go func(i int, branch int, party int) {
+						fmt.Println("job")
+						defer lc_wg.Done()
+
+						// start and end of block
+						s := i * DIMENSION
+						e := (i + 1) * DIMENSION
+
+						// multiply choice by message
+						ct := bfv.NewCiphertext(oip.recv.params, DIMENSION)
+						pt_mul := bfv.NewPlaintextMul(oip.recv.params)
+						oip.send[party].encoder.EncodeUintMul(t[s:e], pt_mul)
+						oip.send[party].evaluator.Mul(msg1.Cts[branch], pt_mul, ct)
+
+						// add to  accumulation
+						ct_mx.Lock()
+						oip.send[party].evaluator.Add(msg2.Cts[i], ct, msg2.Cts[i])
+						ct_mx.Unlock()
+					}(i, branch, party)
+				}
+			}
+
+			// wait for all work to complete
+			lc_wg.Wait()
+		}(party)
 	}
+	wg.Wait()
 
 	// send response to receiver
 	if err := <-sig_send; err != nil {
@@ -313,38 +388,61 @@ func (oip *OIP) OIPMapping(mapping [][]int, b []uint64, v []uint64) ([]uint64, e
 	)
 
 	// act as receiver
+	fmt.Println("Act as receiver")
 	for party := 0; party < oip.parties; party++ {
-		if party == oip.me {
-			continue
-		}
+		wg.Add(1)
+		go func(party int) {
+			defer wg.Done()
+			if party == oip.me {
+				return
+			}
 
-		// receieve message from sender
-		var msg_send MsgSender
-		if err := oip.conn[party].Recv(&msg_send); err != nil {
-			return nil, err
-		}
+			var res_mx sync.Mutex
+			var lc_wg sync.WaitGroup
 
-		// decrypt message
-		res := make([]uint64, pad_size)
-		for i := 0; i < blocks; i++ {
-			// start and end of block
-			s := i * DIMENSION
-			e := (i + 1) * DIMENSION
+			// receieve message from sender
+			var msg_send MsgSender
+			if err := oip.conn[party].Recv(&msg_send); err != nil {
+				panic(err)
+				return
+			}
 
-			// descrypt block
-			pt_new := bfv.NewPlaintext(oip.recv.params)
-			oip.recv.decryptor.Decrypt(msg_send.Cts[i], pt_new)
-			oip.recv.encoder.DecodeUint(pt_new, res[s:e])
-		}
+			// decrypt message
+			res := make([]uint64, pad_size)
+			for i := 0; i < blocks; i++ {
+				lc_wg.Add(1)
+				go func(i int) {
+					defer lc_wg.Done()
+					fmt.Println("job")
 
-		// accumulate into share
-		fmt.Println("Preshare:", share)
-		fmt.Println("Res:", res[:size])
-		for i := 0; i < size; i++ {
-			share[i] = add(share[i], res[i])
-		}
+					// start and end of block
+					s := i * DIMENSION
+					e := (i + 1) * DIMENSION
+
+					// descrypt block
+					pt_new := bfv.NewPlaintext(oip.recv.params)
+					oip.recv.decryptor.Decrypt(msg_send.Cts[i], pt_new)
+					res_mx.Lock()
+					oip.recv.encoder.DecodeUint(pt_new, res[s:e])
+					res_mx.Unlock()
+				}(i)
+			}
+
+			// wait for work to complete
+			lc_wg.Wait()
+
+			// accumulate into share
+			fmt.Println("Preshare:", share)
+			fmt.Println("Res:", res[:size])
+			share_mx.Lock()
+			for i := 0; i < size; i++ {
+				share[i] = add(share[i], res[i])
+			}
+			share_mx.Unlock()
+		}(party)
 	}
 
+	wg.Wait()
 	if err := <-sig_send; err != nil {
 		return nil, err
 	}
