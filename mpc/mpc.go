@@ -27,7 +27,7 @@ func NewMPC(in io.Reader, out io.Writer) *MPC {
 
 // input a value into the MPC
 func (m *MPC) Input(elems []uint64) error {
-	fmt.Println("Input values to MPC:", elems)
+	fmt.Println("Input values to MPC:", len(elems))
 
 	//
 	for i := 0; i < len(elems); i++ {
@@ -80,7 +80,7 @@ func (m *MPC) Output(size int) ([]uint64, error) {
 			return nil, errors.New("no output, EOF")
 		}
 
-		fmt.Println("Data:", m.in.Text())
+		// fmt.Println("Data:", m.in.Text())
 
 		// discard junk
 		if strings.HasPrefix(m.in.Text(), OUTPUT_PROMPT) {
@@ -106,7 +106,7 @@ func (m *MPC) Output(size int) ([]uint64, error) {
 	if len(elems) != size {
 		panic("too many elements")
 	}
-	fmt.Println("Elems:", elems)
+	fmt.Println("Elems:", len(elems))
 	return elems, nil
 }
 

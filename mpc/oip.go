@@ -200,6 +200,7 @@ func (oip *OIP) send_oip(
 				ct_mx.Lock()
 				sender.evaluator.Add(msg2.Cts[i], ct, msg2.Cts[i])
 				ct_mx.Unlock()
+				fmt.Println("Send OIP block.")
 			}(i, branch)
 		}
 	}
@@ -257,6 +258,7 @@ func (oip *OIP) recv_oip(
 			res_mx.Lock()
 			oip.recv.encoder.DecodeUint(pt_new, res[s:e])
 			res_mx.Unlock()
+			fmt.Println("Receieve OIP block.")
 		}(i)
 	}
 
@@ -275,10 +277,9 @@ func (oip *OIP) OIPMapping(mapping [][]int, b []uint64, v []uint64) ([]uint64, e
 	// debug
 	// b = []uint64{1, 0}
 	// v = []uint64{1, 2, 3, 4, 5, 6}
-	fmt.Println("OIPMapping, v:", v, "b:", b)
+	// fmt.Println("OIPMapping, v:", v, "b:", b)
 
 	if len(mapping) != len(b) {
-		fmt.Println(mapping, b, v)
 		fmt.Println(
 			"len(mapping) =", len(mapping),
 			"len(mapping[0]) =", len(mapping[0]),
@@ -291,21 +292,24 @@ func (oip *OIP) OIPMapping(mapping [][]int, b []uint64, v []uint64) ([]uint64, e
 	size := len(mapping[0])
 	branches := len(mapping)
 
-	// calculate local cross terms
-	fmt.Println("Local cross terms")
-	var share_mx sync.Mutex // lock protecting the share
-	share_mx.Lock()
-	share := make([]uint64, size)
-	for branch := 0; branch < branches; branch++ {
-		m := mapping[branch]
-		for i := 0; i < size; i++ {
-			h := mul(b[branch], v[m[i]])
-			share[i] = add(share[i], h)
-		}
-	}
-	share_mx.Unlock()
-
 	var wg sync.WaitGroup
+	var share_mx sync.Mutex // lock protecting the share
+	share := make([]uint64, size)
+
+	// calculate local cross terms
+	wg.Add(1)
+	go func() {
+		share_mx.Lock()
+		for branch := 0; branch < branches; branch++ {
+			m := mapping[branch]
+			for i := 0; i < size; i++ {
+				h := mul(b[branch], v[m[i]])
+				share[i] = add(share[i], h)
+			}
+		}
+		share_mx.Unlock()
+		wg.Done()
+	}()
 
 	// act as receiever
 	for party := 0; party < oip.parties; party++ {
