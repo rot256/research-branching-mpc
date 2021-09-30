@@ -1,8 +1,9 @@
 package main
 
 import (
-	"encoding/json"
+	"bufio"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -19,25 +20,26 @@ func party_port(party int) int {
 }
 
 type Connection struct {
-	/*
-		dec   *gob.Decoder
-		enc   *gob.Encoder
-	*/
-	/*
-			dec *json.Decoder
-			enc *json.Encoder
-		dec   *cbor.Decoder
-		enc   *cbor.Encoder
-	*/
-	dec   *json.Decoder
-	enc   *json.Encoder
+	conn  *bufio.ReadWriter
 	other int
+}
+
+func (c *Connection) Write(s []byte) error {
+	_, err := c.conn.Write(s)
+	if err != nil {
+		return err
+	}
+	return c.conn.Flush()
+}
+
+func (c *Connection) Read(dst []byte) error {
+	_, err := io.ReadFull(c.conn, dst)
+	return err
 }
 
 func MeConnection(me int) Connection {
 	return Connection{
-		dec:   nil,
-		enc:   nil,
+		conn:  nil,
 		other: me,
 	}
 }
@@ -50,28 +52,112 @@ func NewConnection(conn net.Conn, me int) (Connection, error) {
 				dec:   json.NewDecoder(conn),
 				enc:   json.NewEncoder(conn),
 		*/
-		dec:   json.NewDecoder(conn),
-		enc:   json.NewEncoder(conn),
+		conn: bufio.NewReadWriter(
+			bufio.NewReader(conn),
+			bufio.NewWriter(conn),
+		),
 		other: 0,
 	}
 
 	// identity peers
-	if err := c.Send(me); err != nil {
+	if err := c.WriteInt(me); err != nil {
 		return c, err
 	}
-	if err := c.Recv(&c.other); err != nil {
+
+	other, err := c.ReadInt()
+	if err != nil {
 		return c, err
 	}
+	c.other = other
 	return c, nil
 }
 
-func (c *Connection) Send(v interface{}) error {
-	fmt.Println("Send:", v)
-	return c.enc.Encode(v)
-}
+func MakeConnections(batches, parties, me int) [][]Connection {
+	addr := ":" + strconv.Itoa(party_port(me))
+	fmt.Println("Making connections:", addr)
 
-func (c *Connection) Recv(v interface{}) error {
-	return c.dec.Decode(v)
+	conns := make(chan net.Conn)
+
+	addr_me, err := net.ResolveTCPAddr("tcp", addr)
+	if err != nil {
+		panic(err)
+	}
+
+	// listen for connections
+	go func() {
+		ls, err := net.ListenTCP("tcp", addr_me)
+		if err != nil {
+			panic(err)
+		}
+		for {
+			conn, err := ls.AcceptTCP()
+			conn.SetReadBuffer(TCP_BUFFER)
+			if err != nil {
+				panic(err)
+			}
+			conns <- conn
+		}
+	}()
+
+	// create TCP connections to higher parties
+	go func() {
+		for batch := 0; batch < batches; batch++ {
+			for party := 0; party < parties; party++ {
+				if party > me {
+					// I must connect
+					addr, err := net.ResolveTCPAddr("tcp", party_address(party))
+					if err != nil {
+						panic(err)
+					}
+					conn, err := net.DialTCP("tcp", nil, addr)
+					if err != nil {
+						panic(err)
+					}
+					conn.SetReadBuffer(TCP_BUFFER)
+					conns <- conn
+				}
+			}
+		}
+	}()
+
+	// get parties - 1 connections and identity
+	num_conns := parties * batches
+
+	con := make([]Connection, 0, num_conns)
+	for batch := 0; batch < batches; batch++ {
+		for i := 0; i < parties; i++ {
+			if i == 0 {
+				con = append(con, MeConnection(me))
+			} else {
+				c := <-conns
+				fmt.Println("Connection:", i)
+				g, err := NewConnection(c, me)
+				if err != nil {
+					panic(err)
+				}
+				con = append(con, g)
+			}
+		}
+	}
+
+	// sort connections after id
+	sort.Slice(con, func(i, j int) bool {
+		return con[i].other < con[j].other
+	})
+
+	// split into batches
+	bcon := make([][]Connection, batches)
+	next := 0
+	for i := 0; i < parties; i++ {
+		for batch := 0; batch < batches; batch++ {
+			bcon[batch] = append(bcon[batch], con[next])
+			next += 1
+		}
+	}
+
+	//
+	fmt.Println("Connections:", bcon)
+	return bcon
 }
 
 func main() {
@@ -136,69 +222,10 @@ func main() {
 	mpc := NewMPC(stdout, stdin)
 	fmt.Println(mpc)
 
-	addr_me, err := net.ResolveTCPAddr("tcp", ":"+strconv.Itoa(party_port(me)))
-	if err != nil {
-		panic(err)
-	}
+	// make TCP connections
+	bcon := MakeConnections(2, parties, me)
 
-	conns := make(chan net.Conn)
-
-	// listen for connections
-	go func() {
-		ls, err := net.ListenTCP("tcp", addr_me)
-		if err != nil {
-			panic(err)
-		}
-		for {
-			conn, err := ls.AcceptTCP()
-			conn.SetReadBuffer(TCP_BUFFER)
-			if err != nil {
-				panic(err)
-			}
-			conns <- conn
-		}
-	}()
-
-	// create TCP connections to higher parties
-	go func() {
-		for party := 0; party < parties; party++ {
-			if party > me {
-				// I must connect
-				addr, err := net.ResolveTCPAddr("tcp", party_address(party))
-				if err != nil {
-					panic(err)
-				}
-				conn, err := net.DialTCP("tcp", nil, addr)
-				conn.SetReadBuffer(TCP_BUFFER)
-				if err != nil {
-					panic(err)
-				}
-				conns <- conn
-			}
-		}
-	}()
-
-	// get parties - 1 connections and identity
-	con := make([]Connection, 0, parties)
-	con = append(con, MeConnection(me))
-	for i := 1; i < parties; i++ {
-		c := <-conns
-		fmt.Println("Connection:", i)
-		g, err := NewConnection(c, me)
-		if err != nil {
-			panic(err)
-		}
-		con = append(con, g)
-	}
-
-	// sort connections after
-	sort.Slice(con, func(i, j int) bool {
-		return con[i].other < con[j].other
-	})
-
-	fmt.Println("Connections:", con)
-
-	oip, err := NewIOP(con, me, parties)
+	oip, err := NewOIP(bcon, me, parties)
 	if err != nil {
 		panic(err)
 	}
