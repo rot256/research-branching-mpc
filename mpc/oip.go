@@ -148,7 +148,7 @@ func (oip *OIP) send_oip(
 	msg2 := MsgSender{}
 	msg2.Cts = make([]*bfv.Ciphertext, blocks, blocks)
 	for i := 0; i < blocks; i++ {
-		msg2.Cts[i] = bfv.NewCiphertext(oip.recv.params, DIMENSION)
+		msg2.Cts[i] = bfv.NewCiphertext(oip.recv.params, 1)
 	}
 
 	// wait for all parallel jobs to finish
@@ -191,7 +191,7 @@ func (oip *OIP) send_oip(
 				e := (i + 1) * DIMENSION
 
 				// multiply choice by message
-				ct := bfv.NewCiphertext(oip.recv.params, DIMENSION)
+				ct := bfv.NewCiphertext(oip.recv.params, 1)
 				pt_mul := bfv.NewPlaintextMul(oip.recv.params)
 				sender.encoder.EncodeUintMul(t[s:e], pt_mul)
 				sender.evaluator.Mul(msg1.Cts[branch], pt_mul, ct)
