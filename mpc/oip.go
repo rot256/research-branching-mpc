@@ -2,16 +2,17 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"sync"
 
 	"github.com/ldsec/lattigo/v2/bfv"
 )
 
-const DIMENSION int = 1 << 12
+var LITERAL bfv.ParametersLiteral = bfv.PN12QP109
+var DIMENSION int = 1 << LITERAL.LogN
 
 func SetupParams() bfv.Parameters {
-	lit := bfv.PN12QP109
-	params, err := bfv.NewParametersFromLiteral(lit)
+	params, err := bfv.NewParametersFromLiteral(LITERAL)
 	if err != nil {
 		panic(err)
 	}
@@ -26,7 +27,7 @@ type OIP struct {
 	conn [][]Connection
 
 	// public keys of other parties
-	recv *Receiver
+	recv []*Receiver
 	send []*Sender
 }
 
@@ -54,19 +55,23 @@ func NewOIP(
 	oip := &OIP{}
 	oip.me = me
 	oip.parties = parties
+	oip.conn = conn
 
 	// setup receivers
 	params := SetupParams()
-	oip.recv = NewReceiver(params)
-	oip.conn = conn
+	recv := NewReceiver(params)
+	oip.recv = make([]*Receiver, 0)
+	for p := 0; p < parties; p++ {
+		oip.recv = append(oip.recv, recv.Duplicate())
+	}
 
 	// send public key to every other party
 	func() {
-		fmt.Println("Broadcast own public key")
+		log.Println("Broadcast own public key")
 
 		setup := MsgSetup{
-			Pk:  oip.recv.pk,
-			Rlk: oip.recv.rlk,
+			Pk:  recv.pk,
+			Rlk: recv.rlk,
 		}
 
 		// send to each party
@@ -78,7 +83,7 @@ func NewOIP(
 			// wait for message
 			go func(party int, setup *MsgSetup) {
 				c := oip.conn[0][party]
-				if err := c.WriteMsgSetup(setup); err != nil {
+				if err := c.Encode(setup); err != nil {
 					panic(err)
 				}
 			}(party, &setup)
@@ -91,7 +96,7 @@ func NewOIP(
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	func() {
-		fmt.Println("Receieve public keys")
+		log.Println("Receieve public keys")
 
 		// receieve from each party
 		for party := 0; party < oip.parties; party++ {
@@ -146,9 +151,9 @@ func (oip *OIP) send_oip(
 	// create ciphertexts
 	var ct_mx sync.Mutex
 	msg2 := MsgSender{}
-	msg2.Cts = make([]*bfv.Ciphertext, blocks, blocks)
+	msg2.Cts = make([]*bfv.Ciphertext, blocks)
 	for i := 0; i < blocks; i++ {
-		msg2.Cts[i] = bfv.NewCiphertext(oip.recv.params, 1)
+		msg2.Cts[i] = bfv.NewCiphertext(oip.recv[0].params, 1)
 	}
 
 	// wait for all parallel jobs to finish
@@ -162,7 +167,7 @@ func (oip *OIP) send_oip(
 
 			s := i * DIMENSION
 			e := (i + 1) * DIMENSION
-			pt_mask := bfv.NewPlaintext(oip.recv.params)
+			pt_mask := bfv.NewPlaintext(oip.recv[0].params)
 			sender.encoder.EncodeUint(x[s:e], pt_mask)
 
 			ct_mx.Lock()
@@ -191,8 +196,9 @@ func (oip *OIP) send_oip(
 				e := (i + 1) * DIMENSION
 
 				// multiply choice by message
-				ct := bfv.NewCiphertext(oip.recv.params, 1)
-				pt_mul := bfv.NewPlaintextMul(oip.recv.params)
+
+				ct := bfv.NewCiphertext(oip.recv[0].params, 1)
+				pt_mul := bfv.NewPlaintextMul(oip.recv[0].params)
 				sender.encoder.EncodeUintMul(t[s:e], pt_mul)
 				sender.evaluator.Mul(msg1.Cts[branch], pt_mul, ct)
 
@@ -200,7 +206,6 @@ func (oip *OIP) send_oip(
 				ct_mx.Lock()
 				sender.evaluator.Add(msg2.Cts[i], ct, msg2.Cts[i])
 				ct_mx.Unlock()
-				fmt.Println("Send OIP block.")
 			}(i, branch)
 		}
 	}
@@ -209,13 +214,14 @@ func (oip *OIP) send_oip(
 	wg.Wait()
 
 	// ship it!
-	if err := conn.WriteMsgSender(&msg2); err != nil {
+	if err := conn.Encode(&msg2); err != nil {
 		panic(err)
 	}
 }
 
 func (oip *OIP) recv_oip(
 	conn Connection,
+	recv *Receiver,
 	share_mx *sync.Mutex,
 	share []uint64,
 	b []uint64,
@@ -225,9 +231,8 @@ func (oip *OIP) recv_oip(
 	pad_size := blocks * DIMENSION
 
 	// send first message
-	msg1 := oip.recv.NewSelection(b)
-	err := conn.WriteMsgReceiver(msg1)
-	if err != nil {
+	msg1 := recv.NewSelection(b)
+	if err := conn.Encode(msg1); err != nil {
 		panic(err)
 	}
 
@@ -253,12 +258,11 @@ func (oip *OIP) recv_oip(
 			e := (i + 1) * DIMENSION
 
 			// descrypt block
-			pt_new := bfv.NewPlaintext(oip.recv.params)
-			oip.recv.decryptor.Decrypt(msg2.Cts[i], pt_new)
+			pt_new := bfv.NewPlaintext(recv.params)
+			recv.decryptor.Decrypt(msg2.Cts[i], pt_new)
 			res_mx.Lock()
-			oip.recv.encoder.DecodeUint(pt_new, res[s:e])
+			recv.encoder.DecodeUint(pt_new, res[s:e])
 			res_mx.Unlock()
-			fmt.Println("Receieve OIP block.")
 		}(i)
 	}
 
@@ -320,6 +324,7 @@ func (oip *OIP) OIPMapping(mapping [][]int, b []uint64, v []uint64) ([]uint64, e
 		go func(party int) {
 			oip.recv_oip(
 				oip.ConnRecv(party),
+				oip.recv[party],
 				&share_mx,
 				share,
 				b,

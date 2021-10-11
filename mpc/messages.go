@@ -1,8 +1,6 @@
 package main
 
 import (
-	"encoding/binary"
-
 	"github.com/ldsec/lattigo/v2/bfv"
 	"github.com/ldsec/lattigo/v2/rlwe"
 )
@@ -20,6 +18,25 @@ type MsgSender struct {
 	Cts []*bfv.Ciphertext
 }
 
+func (c *Connection) ReadMsgSetup() (MsgSetup, error) {
+	var msg MsgSetup
+	err := c.Decode(&msg)
+	return msg, err
+}
+
+func (c *Connection) ReadMsgReceiver() (MsgReceiver, error) {
+	var msg MsgReceiver
+	err := c.Decode(&msg)
+	return msg, err
+}
+
+func (c *Connection) ReadMsgSender() (MsgSender, error) {
+	var msg MsgSender
+	err := c.Decode(&msg)
+	return msg, err
+}
+
+/*
 func (c *Connection) WriteMsgSetup(msg *MsgSetup) error {
 	pk_data, err := msg.Pk.MarshalBinary()
 	if err != nil {
@@ -119,17 +136,6 @@ func (c *Connection) ReadInt() (int, error) {
 func (c *Connection) WriteCTs(cts []*bfv.Ciphertext) error {
 	c.WriteInt(len(cts))
 	for i := 0; i < len(cts); i++ {
-		/*
-			a, _ := cts[i].MarshalBinary()
-			ct_new := &bfv.Ciphertext{}
-			ct_new.UnmarshalBinary(a)
-			if *cts[i] != *ct_new {
-				fmt.Println(len(cts[i].Ciphertext.Value))
-				fmt.Println(len(ct_new.Ciphertext.Value))
-				// spew.Dump(cts[i], ct_new)
-				// panic("wtf")
-			}
-		*/
 
 		data, err := cts[i].MarshalBinary()
 		if err != nil {
@@ -162,3 +168,4 @@ func (c *Connection) ReadCTs() ([]*bfv.Ciphertext, error) {
 
 	return cts, nil
 }
+*/

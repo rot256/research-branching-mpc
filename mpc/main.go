@@ -1,14 +1,13 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"os/exec"
 	"sort"
 	"strconv"
+	"sync"
 )
 
 func party_address(party int) string {
@@ -19,72 +18,54 @@ func party_port(party int) int {
 	return party + 7000
 }
 
-type Connection struct {
-	conn  *bufio.ReadWriter
+type ConnectionIdentify struct {
 	other int
+	conn  Connection
 }
 
-func (c *Connection) Write(s []byte) error {
-	_, err := c.conn.Write(s)
+type Networker struct {
+	me      int
+	players int
+	conns   chan ConnectionIdentify
+}
+
+func (n *Networker) Connect(player int) error {
+	// create TCP connection
+	addr, err := net.ResolveTCPAddr("tcp", party_address(player))
 	if err != nil {
 		return err
 	}
-	return c.conn.Flush()
-}
-
-func (c *Connection) Read(dst []byte) error {
-	_, err := io.ReadFull(c.conn, dst)
-	return err
-}
-
-func MeConnection(me int) Connection {
-	return Connection{
-		conn:  nil,
-		other: me,
-	}
-}
-
-func NewConnection(conn net.Conn, me int) (Connection, error) {
-	c := Connection{
-		/*
-			dec: cbor.NewDecoder(conn),
-			enc: cbor.NewEncoder(conn),
-				dec:   json.NewDecoder(conn),
-				enc:   json.NewEncoder(conn),
-		*/
-		conn: bufio.NewReadWriter(
-			bufio.NewReader(conn),
-			bufio.NewWriter(conn),
-		),
-		other: 0,
-	}
-
-	// identity peers
-	if err := c.WriteInt(me); err != nil {
-		return c, err
-	}
-
-	other, err := c.ReadInt()
+	conn, err := net.DialTCP("tcp", nil, addr)
 	if err != nil {
-		return c, err
+		return err
 	}
-	c.other = other
-	return c, nil
+
+	// identify self to other party
+	var c ConnectionIdentify
+	c.other = player
+	c.conn = NewConnection(conn)
+	if err := c.conn.Encode(n.me); err != nil {
+		return err
+	}
+	n.conns <- c
+	return nil
 }
 
-func MakeConnections(batches, parties, me int) [][]Connection {
-	addr := ":" + strconv.Itoa(party_port(me))
-	fmt.Println("Making connections:", addr)
-
-	conns := make(chan net.Conn)
-
-	addr_me, err := net.ResolveTCPAddr("tcp", addr)
+func NewNetworker(players, me int) Networker {
+	// listen for connections
+	addr_me, err := net.ResolveTCPAddr("tcp", ":"+strconv.Itoa(party_port(me)))
 	if err != nil {
 		panic(err)
 	}
 
-	// listen for connections
-	go func() {
+	//
+	var networker Networker
+	networker.conns = make(chan ConnectionIdentify, 10)
+	networker.me = me
+	networker.players = players
+
+	// accept connections indefintely
+	go func(conns chan ConnectionIdentify) {
 		ls, err := net.ListenTCP("tcp", addr_me)
 		if err != nil {
 			panic(err)
@@ -95,69 +76,65 @@ func MakeConnections(batches, parties, me int) [][]Connection {
 			if err != nil {
 				panic(err)
 			}
-			conns <- conn
-		}
-	}()
 
-	// create TCP connections to higher parties
-	go func() {
-		for batch := 0; batch < batches; batch++ {
-			for party := 0; party < parties; party++ {
-				if party > me {
-					// I must connect
-					addr, err := net.ResolveTCPAddr("tcp", party_address(party))
-					if err != nil {
-						panic(err)
-					}
-					conn, err := net.DialTCP("tcp", nil, addr)
-					if err != nil {
-						panic(err)
-					}
-					conn.SetReadBuffer(TCP_BUFFER)
-					conns <- conn
-				}
+			// identify counter party
+			var c ConnectionIdentify
+			c.conn = NewConnection(conn)
+			if err := c.conn.Decode(&c.other); err != nil {
+				panic(err)
 			}
+			conns <- c
 		}
-	}()
+	}(networker.conns)
 
-	// get parties - 1 connections and identity
-	num_conns := parties * batches
+	return networker
+}
 
-	con := make([]Connection, 0, num_conns)
-	for batch := 0; batch < batches; batch++ {
-		for i := 0; i < parties; i++ {
-			if i == 0 {
-				con = append(con, MeConnection(me))
-			} else {
-				c := <-conns
-				fmt.Println("Connection:", i)
-				g, err := NewConnection(c, me)
-				if err != nil {
+func (n *Networker) NewConnections() []Connection {
+	// make outbound connections
+	var wg sync.WaitGroup
+	for p := 0; p < n.players; p++ {
+		if p > n.me {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := n.Connect(p); err != nil {
 					panic(err)
 				}
-				con = append(con, g)
-			}
+			}()
 		}
 	}
 
-	// sort connections after id
-	sort.Slice(con, func(i, j int) bool {
-		return con[i].other < con[j].other
+	// collect sufficient connections
+	var id_conns []ConnectionIdentify
+	for i := 0; i < n.players; i++ {
+		if i == 0 {
+			id_conns = append(id_conns, ConnectionIdentify{
+				conn:  NilConnection(),
+				other: n.me,
+			})
+		} else {
+			id_conns = append(id_conns, <-n.conns)
+		}
+	}
+
+	// all outbound connections must have been made
+	wg.Wait()
+
+	// sort by party
+	sort.Slice(id_conns, func(i, j int) bool {
+		return id_conns[i].other < id_conns[j].other
 	})
 
-	// split into batches
-	bcon := make([][]Connection, batches)
-	next := 0
-	for i := 0; i < parties; i++ {
-		for batch := 0; batch < batches; batch++ {
-			bcon[batch] = append(bcon[batch], con[next])
-			next += 1
+	// extract connections
+	var conns []Connection
+	for i := 0; i < n.players; i++ {
+		if id_conns[i].other != i {
+			panic("bad connection id")
 		}
+		conns = append(conns, id_conns[i].conn)
 	}
-
-	//
-	fmt.Println("Connections:", bcon)
-	return bcon
+	return conns
 }
 
 func main() {
@@ -223,7 +200,12 @@ func main() {
 	fmt.Println(mpc)
 
 	// make TCP connections
-	bcon := MakeConnections(2, parties, me)
+	networker := NewNetworker(parties, me)
+
+	bcon := [][]Connection{
+		networker.NewConnections(),
+		networker.NewConnections(),
+	}
 
 	oip, err := NewOIP(bcon, me, parties)
 	if err != nil {

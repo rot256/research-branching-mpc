@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-
 	"github.com/ldsec/lattigo/v2/bfv"
 	"github.com/ldsec/lattigo/v2/rlwe"
 )
@@ -36,19 +34,35 @@ func NewReceiver(params bfv.Parameters) *Receiver {
 	}
 }
 
+func (old *Receiver) Duplicate() *Receiver {
+	encoder := bfv.NewEncoder(old.params)
+	encryptor := bfv.NewEncryptor(old.params, old.pk)
+	decryptor := bfv.NewDecryptor(old.params, old.sk)
+	return &Receiver{
+		params:    old.params,
+		pk:        old.pk,
+		sk:        old.sk,
+		rlk:       old.rlk,
+		encryptor: encryptor,
+		decryptor: decryptor,
+		encoder:   encoder,
+	}
+}
+
 func (recv *Receiver) NewSelection(s []uint64) *MsgReceiver {
-	pt := bfv.NewPlaintext(recv.params)
 	cts := make([]*bfv.Ciphertext, len(s))
 	org := make([]uint64, DIMENSION)
 
 	for i := 0; i < len(s); i++ {
+		// duplicate value
 		for j := 0; j < DIMENSION; j++ {
 			org[j] = s[i]
 		}
-		cts[i] = bfv.NewCiphertext(recv.params, DIMENSION)
-		fmt.Println("degree:", cts[i].Degree(), len(cts[i].Ciphertext.Value))
+		pt := bfv.NewPlaintext(recv.params)
+		ct := bfv.NewCiphertext(recv.params, 1)
 		recv.encoder.EncodeUint(org, pt)
-		recv.encryptor.Encrypt(pt, cts[i])
+		recv.encryptor.Encrypt(pt, ct)
+		cts[i] = ct
 	}
 
 	return &MsgReceiver{
