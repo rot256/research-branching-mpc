@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -138,7 +139,7 @@ func (n *Networker) NewConnections() []Connection {
 }
 
 func main() {
-	fmt.Println("starting", os.Args[1:])
+	log.Println("Setting up:", os.Args[1:])
 
 	// find number of players
 	parties := func() int {
@@ -168,50 +169,54 @@ func main() {
 		panic("Player not specified")
 	}()
 
-	fmt.Println("Player:", me)
-	fmt.Println("Parties:", parties)
-
-	// pass arguments to MP-SPDZ command
-	cmd := exec.Command(os.Args[1], os.Args[2:]...)
-
-	// get stdout
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		fmt.Println("failed to open stdout:", err)
-		panic(err)
-	}
-
-	// get stdin
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		fmt.Println("failed to open in:", err)
-		panic(err)
-
-	}
+	log.Println("Player:", me)
+	log.Println("Parties:", parties)
 
 	// start MP-SPDZ
-	if err := cmd.Start(); err != nil {
-		fmt.Println("failed to start:", err)
-		panic(err)
-	}
+	mpc, cmd := func() (*MPC, *exec.Cmd) {
+		// pass arguments to MP-SPDZ command
+		cmd := exec.Command(os.Args[1], os.Args[2:]...)
 
-	// wrap in MPC abstraction
-	mpc := NewMPC(stdout, stdin)
-	fmt.Println(mpc)
+		// get stdout
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			fmt.Println("failed to open stdout:", err)
+			panic(err)
+		}
 
-	// make TCP connections
+		// get stdin
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			fmt.Println("failed to open in:", err)
+			panic(err)
+
+		}
+
+		// start MP-SPDZ instance
+		if err := cmd.Start(); err != nil {
+			fmt.Println("failed to start:", err)
+			panic(err)
+		}
+
+		// wrap in MPC abstraction
+		return NewMPC(stdout, stdin), cmd
+	}()
+
+	// setup OIP
 	networker := NewNetworker(parties, me)
-
-	bcon := [][]Connection{
-		networker.NewConnections(),
-		networker.NewConnections(),
-	}
-
-	oip, err := NewOIP(bcon, me, parties)
+	oip, err := NewOIP(
+		[][]Connection{
+			networker.NewConnections(),
+			networker.NewConnections(),
+		},
+		me,
+		parties,
+	)
 	if err != nil {
 		panic(err)
 	}
 
+	// load inputs for party
 	inputs := func() []uint64 {
 		if me == 1 {
 			inputs := make([]uint64, 100)
@@ -222,16 +227,13 @@ func main() {
 		return random(100)
 	}()
 
-	// setup OIP protocol
+	// run MPC circuit
+	log.Println("Start evaluation...")
 	output := run(me, inputs, mpc, oip)
 
+	// wait for MP-SPDZ to finish
 	if err := cmd.Wait(); err != nil {
-		fmt.Println("error", err)
 		panic(err)
 	}
-
-	fmt.Println("Output:", output)
-
-	// os.Args[0]
-	return
+	log.Println("Output:", output)
 }
