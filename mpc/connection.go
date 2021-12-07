@@ -13,7 +13,7 @@ type Connection struct {
 	dec *gob.Decoder
 }
 
-func DummyPair() (Connection, Connection) {
+func DummyPair() (*Connection, *Connection) {
 	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
 	if err != nil {
 		panic(err)
@@ -35,24 +35,25 @@ func DummyPair() (Connection, Connection) {
 	return NewConnection(c1), NewConnection(c2)
 }
 
-func NDummies(players int) [][]Connection {
+func NDummies(players int) [][]ConnectionPair {
 	// create multi-dimensional array of connections
-	conns := make([][]Connection, players)
+	conns := make([][]ConnectionPair, 0)
 	for p1 := 0; p1 < players; p1++ {
-		conns[p1] = make([]Connection, players)
+		p1_conns := make([]ConnectionPair, players)
+		conns = append(conns, p1_conns)
 	}
 
 	// create pair-wise connections
 	for p1 := 0; p1 < players; p1++ {
 		for p2 := 0; p2 < players; p2++ {
-			if p1 >= p2 {
+			if p1 == p2 {
 				continue
 			}
 
 			// create connection
 			c1, c2 := DummyPair()
-			conns[p1][p2] = c1
-			conns[p2][p1] = c2
+			conns[p1][p2].send = c1
+			conns[p2][p1].recv = c2
 		}
 	}
 	return conns
@@ -66,15 +67,8 @@ func (c *Connection) Decode(v interface{}) error {
 	return c.dec.Decode(v)
 }
 
-func NilConnection() Connection {
-	return Connection{
-		enc: nil,
-		dec: nil,
-	}
-}
-
-func NewConnection(conn io.ReadWriter) Connection {
-	return Connection{
+func NewConnection(conn io.ReadWriter) *Connection {
+	return &Connection{
 		enc: gob.NewEncoder(conn),
 		dec: gob.NewDecoder(conn),
 	}

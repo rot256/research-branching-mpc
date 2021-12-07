@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"sync"
 
@@ -24,31 +23,25 @@ type OIP struct {
 	parties int // number of parties
 
 	// pipes
-	conn [][]Connection
+	conn []ConnectionPair
 
 	// public keys of other parties
 	recv []*Receiver
 	send []*Sender
 }
 
-func (oip *OIP) ConnSend(him int) Connection {
-	if him > oip.me {
-		return oip.conn[0][him]
-	} else {
-		return oip.conn[1][him]
-	}
+// used to send public key
+func (oip *OIP) ConnSend(him int) *Connection {
+	return oip.conn[him].send
 }
 
-func (oip *OIP) ConnRecv(him int) Connection {
-	if him > oip.me {
-		return oip.conn[1][him]
-	} else {
-		return oip.conn[0][him]
-	}
+// used to receieve public key
+func (oip *OIP) ConnRecv(him int) *Connection {
+	return oip.conn[him].recv
 }
 
 func NewOIP(
-	conn [][]Connection,
+	conn []ConnectionPair,
 	me,
 	parties int,
 ) (*OIP, error) {
@@ -56,11 +49,12 @@ func NewOIP(
 	oip.me = me
 	oip.parties = parties
 	oip.conn = conn
+	oip.send = make([]*Sender, oip.parties)
+	oip.recv = make([]*Receiver, 0)
 
 	// setup receivers
 	params := SetupParams()
 	recv := NewReceiver(params)
-	oip.recv = make([]*Receiver, 0)
 	for p := 0; p < parties; p++ {
 		oip.recv = append(oip.recv, recv.Duplicate())
 	}
@@ -80,9 +74,8 @@ func NewOIP(
 				continue
 			}
 
-			// wait for message
 			go func(party int, setup *MsgSetup) {
-				c := oip.conn[0][party]
+				c := oip.ConnSend(party)
 				if err := c.Encode(setup); err != nil {
 					panic(err)
 				}
@@ -90,15 +83,13 @@ func NewOIP(
 		}
 	}()
 
-	oip.send = make([]*Sender, oip.parties)
-
 	// receive public keys and setup senders
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	func() {
 		log.Println("Receieve public keys")
 
-		// receieve from each party
+		// receieve public keys from each party
 		for party := 0; party < oip.parties; party++ {
 			if party == me {
 				continue
@@ -107,7 +98,7 @@ func NewOIP(
 			wg.Add(1)
 			go func(party int) {
 				defer wg.Done()
-				c := oip.conn[0][party]
+				c := oip.ConnRecv(party)
 				msg, err := c.ReadMsgSetup()
 				if err != nil {
 					panic(err)
@@ -117,11 +108,12 @@ func NewOIP(
 		}
 	}()
 
+	log.Println("OIP, setup complete, player:", me)
 	return oip, nil
 }
 
 func (oip *OIP) send_oip(
-	conn Connection,
+	conn *Connection,
 	sender *Sender,
 	share_mx *sync.Mutex,
 	share []uint64,
@@ -133,6 +125,8 @@ func (oip *OIP) send_oip(
 	blocks := (size + DIMENSION - 1) / DIMENSION
 	branches := len(mapping)
 	pad_size := blocks * DIMENSION
+
+	log.Println("OIP Send,", "size:", size, "len(v):", len(v), "len(b):", b, "pad_size:", pad_size, "len(share):", len(share))
 
 	// receieve message from receiever
 	msg1, err := conn.ReadMsgReceiver()
@@ -152,9 +146,6 @@ func (oip *OIP) send_oip(
 	var ct_mx sync.Mutex
 	msg2 := MsgSender{}
 	msg2.Cts = make([]*bfv.Ciphertext, blocks)
-	for i := 0; i < blocks; i++ {
-		msg2.Cts[i] = bfv.NewCiphertext(oip.recv[0].params, 1)
-	}
 
 	// wait for all parallel jobs to finish
 	var wg sync.WaitGroup
@@ -162,7 +153,7 @@ func (oip *OIP) send_oip(
 	// add random masks (parallel)
 	for i := 0; i < blocks; i++ {
 		wg.Add(1)
-		go func(i int) {
+		func(i int) {
 			defer wg.Done()
 
 			s := i * DIMENSION
@@ -170,9 +161,8 @@ func (oip *OIP) send_oip(
 			pt_mask := bfv.NewPlaintext(oip.recv[0].params)
 			sender.encoder.EncodeUint(x[s:e], pt_mask)
 
-			ct_mx.Lock()
+			msg2.Cts[i] = bfv.NewCiphertext(oip.recv[0].params, 1)
 			sender.evaluator.Add(msg2.Cts[i], pt_mask, msg2.Cts[i])
-			ct_mx.Unlock()
 		}(i)
 	}
 
@@ -188,7 +178,7 @@ func (oip *OIP) send_oip(
 		// accumulate in ciphertext
 		for i := 0; i < blocks; i++ {
 			wg.Add(1)
-			go func(i int, branch int) {
+			func(i int, branch int) {
 				defer wg.Done()
 
 				// start and end of block
@@ -220,7 +210,7 @@ func (oip *OIP) send_oip(
 }
 
 func (oip *OIP) recv_oip(
-	conn Connection,
+	conn *Connection,
 	recv *Receiver,
 	share_mx *sync.Mutex,
 	share []uint64,
@@ -229,6 +219,8 @@ func (oip *OIP) recv_oip(
 	size := len(share)
 	blocks := (size + DIMENSION - 1) / DIMENSION
 	pad_size := blocks * DIMENSION
+
+	log.Println("OIP Recv, blocks:", blocks, "pad_size:", pad_size, "size:", size, "len(b):", len(b))
 
 	// send first message
 	msg1 := recv.NewSelection(b)
@@ -250,7 +242,7 @@ func (oip *OIP) recv_oip(
 	var wg sync.WaitGroup
 	for i := 0; i < blocks; i++ {
 		wg.Add(1)
-		go func(i int) {
+		func(i int) {
 			defer wg.Done()
 
 			// start and end of block
@@ -284,13 +276,12 @@ func (oip *OIP) OIPMapping(mapping [][]int, b []uint64, v []uint64) ([]uint64, e
 	// fmt.Println("OIPMapping, v:", v, "b:", b)
 
 	if len(mapping) != len(b) {
-		fmt.Println(
+		log.Fatalln(
 			"len(mapping) =", len(mapping),
 			"len(mapping[0]) =", len(mapping[0]),
 			"len(b) =", len(b),
 			"len(v) =", len(v),
 		)
-		panic("invalid dimension")
 	}
 
 	size := len(mapping[0])
@@ -302,7 +293,7 @@ func (oip *OIP) OIPMapping(mapping [][]int, b []uint64, v []uint64) ([]uint64, e
 
 	// calculate local cross terms
 	wg.Add(1)
-	go func() {
+	func() {
 		share_mx.Lock()
 		for branch := 0; branch < branches; branch++ {
 			m := mapping[branch]

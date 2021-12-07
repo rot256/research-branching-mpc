@@ -1,141 +1,151 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"os/exec"
-	"sort"
 	"strconv"
+	"strings"
 	"sync"
 )
 
-func party_address(party int) string {
-	return "127.0.0.1:" + strconv.Itoa(party_port(party))
-}
-
-func party_port(party int) int {
-	return party + 7000
-}
+const ENV_PLAYER_ADDRESSES = "PLAYER_ADDRESSES"
 
 type ConnectionIdentify struct {
 	other int
 	conn  Connection
 }
 
+type ConnectionPair struct {
+	send *Connection
+	recv *Connection
+}
+
 type Networker struct {
 	me      int
 	players int
-	conns   chan ConnectionIdentify
+	conns   []ConnectionPair
+	ready   sync.WaitGroup
+}
+
+var ADDRESSES []*net.TCPAddr
+
+/// load player addresses
+func init() {
+	var path string
+	for _, e := range os.Environ() {
+		pair := strings.SplitN(e, "=", 2)
+		if pair[0] == ENV_PLAYER_ADDRESSES {
+			path = pair[1]
+		}
+	}
+
+	if path == "" {
+		log.Println("No peer addresses loaded")
+		return
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		addr, err := net.ResolveTCPAddr("tcp", scanner.Text())
+		if err != nil {
+			log.Fatal(err)
+		}
+		ADDRESSES = append(ADDRESSES, addr)
+		fmt.Println("Peer address:", addr)
+	}
 }
 
 func (n *Networker) Connect(player int) error {
-	// create TCP connection
-	addr, err := net.ResolveTCPAddr("tcp", party_address(player))
-	if err != nil {
-		return err
+	if player >= len(ADDRESSES) {
+		log.Fatal("Player addresses not specified", player)
 	}
-	conn, err := net.DialTCP("tcp", nil, addr)
+
+	// create TCP connection
+	conn, err := net.DialTCP("tcp", nil, ADDRESSES[player])
 	if err != nil {
 		return err
 	}
 
-	// identify self to other party
-	var c ConnectionIdentify
-	c.other = player
-	c.conn = NewConnection(conn)
-	if err := c.conn.Encode(n.me); err != nil {
-		return err
+	// wrap in Gob
+	if n.conns[player].send != nil {
+		log.Fatal("Double connection to:", player)
 	}
-	n.conns <- c
-	return nil
+	n.conns[player].send = NewConnection(conn)
+	n.ready.Done()
+
+	// tell the other side who we are
+	return n.conns[player].send.Encode(n.me)
 }
 
 func NewNetworker(players, me int) Networker {
-	// listen for connections
-	addr_me, err := net.ResolveTCPAddr("tcp", ":"+strconv.Itoa(party_port(me)))
-	if err != nil {
-		panic(err)
+	if me >= len(ADDRESSES) {
+		log.Fatal("Player addresses not specified", me)
 	}
 
 	//
-	var networker Networker
-	networker.conns = make(chan ConnectionIdentify, 10)
-	networker.me = me
-	networker.players = players
+	var n Networker
+	n.me = me
+	n.players = players
+	n.conns = make([]ConnectionPair, players)
+	n.ready.Add(2 * (players - 1))
 
 	// accept connections indefintely
-	go func(conns chan ConnectionIdentify) {
-		ls, err := net.ListenTCP("tcp", addr_me)
+	go func(n *Networker) {
+		ls, err := net.ListenTCP("tcp", ADDRESSES[me])
 		if err != nil {
 			panic(err)
 		}
+
 		for {
+			// accept new connection
 			conn, err := ls.AcceptTCP()
-			conn.SetReadBuffer(TCP_BUFFER)
 			if err != nil {
 				panic(err)
 			}
+			c := NewConnection(conn)
 
 			// identify counter party
-			var c ConnectionIdentify
-			c.conn = NewConnection(conn)
-			if err := c.conn.Decode(&c.other); err != nil {
+			var them int
+			if err := c.Decode(&them); err != nil {
 				panic(err)
 			}
-			conns <- c
-		}
-	}(networker.conns)
 
-	return networker
-}
+			// add connection
+			if n.conns[them].recv != nil {
+				log.Fatal("Double connection from:", them)
+			}
+			n.conns[them].recv = c
+			n.ready.Done()
 
-func (n *Networker) NewConnections() []Connection {
-	// make outbound connections
-	var wg sync.WaitGroup
-	for p := 0; p < n.players; p++ {
-		if p > n.me {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				if err := n.Connect(p); err != nil {
-					panic(err)
+			// connect back to higher player number (he is now online, we know)
+			if them > me {
+				if err := n.Connect(them); err != nil {
+					log.Fatalln("Failed to connect to", them, err)
 				}
-			}()
+			}
+		}
+	}(&n)
+
+	// connect to lower players
+	for them := 0; them < me; them++ {
+		if err := n.Connect(them); err != nil {
+			log.Fatalln("Failed to connect to", them, err)
 		}
 	}
 
-	// collect sufficient connections
-	var id_conns []ConnectionIdentify
-	for i := 0; i < n.players; i++ {
-		if i == 0 {
-			id_conns = append(id_conns, ConnectionIdentify{
-				conn:  NilConnection(),
-				other: n.me,
-			})
-		} else {
-			id_conns = append(id_conns, <-n.conns)
-		}
-	}
-
-	// all outbound connections must have been made
-	wg.Wait()
-
-	// sort by party
-	sort.Slice(id_conns, func(i, j int) bool {
-		return id_conns[i].other < id_conns[j].other
-	})
-
-	// extract connections
-	var conns []Connection
-	for i := 0; i < n.players; i++ {
-		if id_conns[i].other != i {
-			panic("bad connection id")
-		}
-		conns = append(conns, id_conns[i].conn)
-	}
-	return conns
+	// wait for 2 connections from each player
+	n.ready.Wait()
+	return n
 }
 
 func main() {
@@ -154,6 +164,10 @@ func main() {
 		}
 		panic("Parties not specified")
 	}()
+
+	if parties > len(ADDRESSES) {
+		log.Fatal("Too few player addresses specified")
+	}
 
 	// find which player
 	me := func() int {
@@ -202,13 +216,12 @@ func main() {
 		return NewMPC(stdout, stdin), cmd
 	}()
 
-	// setup OIP
+	// block and wait for connections
 	networker := NewNetworker(parties, me)
+
+	// setup OIP
 	oip, err := NewOIP(
-		[][]Connection{
-			networker.NewConnections(),
-			networker.NewConnections(),
-		},
+		networker.conns,
 		me,
 		parties,
 	)
