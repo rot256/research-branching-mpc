@@ -232,7 +232,7 @@ class Ctx:
     def compile(self, gates):
         self.prog('package main')
         self.prog('')
-        self.prog('func run(player  int, inputs []uint64, mpc *MPC, oip *OIP) []uint64 {')
+        self.prog('func run(player  int, inputs []uint64, mpc *MPC, oip *OIP) ([]uint64, error) {')
         self.prog('output := make([]uint64, 0, 128)')
         self.prog('nxt := 0')
         for (w, g) in enumerate(gates):
@@ -289,7 +289,7 @@ class Ctx:
 
             elif isinstance(g, Disjunction):
                 g.translate(w)
-                self.prog('func() {')
+                self.prog('err := func() error {')
 
                 self.circ('')
                 self.circ('# pack selection wires')
@@ -321,16 +321,20 @@ class Ctx:
                     self.prog('    {' + ','.join(map(str, perm)) +'},')
                 self.prog('}')
 
-                # execute OIP protocol
-                self.additive_random('out', size=out_dim)
-                self.additive_output('b', size=len(g.selector))
-                self.prog('D := oip.TryOIPMapping(mapping, b, out)')
+                # execute OIP protocol on random mask
+                self.additive_random('out', size=out_dim)       # export
+                self.additive_output('b', size=len(g.selector)) # export
+                self.prog('v := apply_mapping(mapping, out)')
+                self.prog('D, err := oip.Select(b, v)')
+                self.prog('if err != nil { return err }')
+
+                # input back into the MPC
                 self.additive_input('D', size=in_dim)
 
                 #
                 self.circ('')
                 self.circ('# pack outputs to the disjunction')
-                self.circ('u    = cint.Array(size={dim})'.format(dim=out_dim))
+                self.circ('u = cint.Array(size={dim})'.format(dim=out_dim))
                 for i, w in enumerate(g.disj_inputs):
                     self.circ('u[{num}] = (out[{num}] + {wire}).reveal()'.format(
                         num=i,
@@ -362,14 +366,16 @@ class Ctx:
                     ))
                     next_idx += 1
 
+                self.prog('return nil')
                 self.prog('}()')
+                self.prog('if err != nil { return nil, err }')
 
 
 
             else:
                 assert False
 
-        self.prog('return output')
+        self.prog('return output, nil')
         self.prog('}')
 
 def export(name, ls):
@@ -403,6 +409,8 @@ def split(prog):
 
 import random
 
+random.seed(0x3333) # reproducable results
+
 def random_circuit(wires, start, length=4096):
     out = []
     wires = list(wires)
@@ -426,13 +434,12 @@ if __name__ == '__main__':
 
     args = iter(sys.argv[1:])
 
-    try:
-        length = int(next(args))
-        branches = int(next(args))
-        parties = int(next(args))
-    except (StopIteration, ValueError):
-        print('%s length branches parties [circuit] [runner]' % sys.argv[0])
-        exit(-1)
+    print(sys.argv)
+    length, branches, parties = next(args).split('-')
+
+    length = int(length)
+    branches = int(branches)
+    parties = int(parties)
 
     def opt():
         global args

@@ -3,6 +3,9 @@
 p = 0xffffffffffffffc5
 ```
 
+```
+./circuit.py 512 2 2 MP-SPDZ/Programs/Source/bmpc.mpc mpc/runner.go
+```
 
 ```
 make -j 8 tldr

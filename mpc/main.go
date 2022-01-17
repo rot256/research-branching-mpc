@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -9,31 +10,13 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"sync"
 )
 
 const ENV_PLAYER_ADDRESSES = "PLAYER_ADDRESSES"
 
-type ConnectionIdentify struct {
-	other int
-	conn  Connection
-}
-
-type ConnectionPair struct {
-	send *Connection
-	recv *Connection
-}
-
-type Networker struct {
-	me      int
-	players int
-	conns   []ConnectionPair
-	ready   sync.WaitGroup
-}
-
 var ADDRESSES []*net.TCPAddr
 
-/// load player addresses
+/// load player addresses (only player0 required)
 func init() {
 	var path string
 	for _, e := range os.Environ() {
@@ -65,7 +48,7 @@ func init() {
 	}
 }
 
-func (n *Networker) Connect(player int) error {
+func connect(me int, player int) (*Connection, error) {
 	if player >= len(ADDRESSES) {
 		log.Fatal("Player addresses not specified", player)
 	}
@@ -73,79 +56,81 @@ func (n *Networker) Connect(player int) error {
 	// create TCP connection
 	conn, err := net.DialTCP("tcp", nil, ADDRESSES[player])
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// wrap in Gob
-	if n.conns[player].send != nil {
-		log.Fatal("Double connection to:", player)
+	c := NewConnection(conn)
+	if err := c.Send(me); err != nil {
+		return nil, err
 	}
-	n.conns[player].send = NewConnection(conn)
-	n.ready.Done()
-
-	// tell the other side who we are
-	return n.conns[player].send.Encode(n.me)
+	return c, nil
 }
 
-func NewNetworker(players, me int) Networker {
-	if me >= len(ADDRESSES) {
-		log.Fatal("Player addresses not specified", me)
+func wait_connections(me int, players int) ([]*Connection, error) {
+	conns := make([]*Connection, players)
+
+	log.Println("Waiting for connections")
+
+	// listen on all interfaces
+	addr, err := net.ResolveTCPAddr("tcp", ":"+strconv.Itoa(ADDRESSES[me].Port))
+	if err != nil {
+		return nil, err
 	}
 
-	//
-	var n Networker
-	n.me = me
-	n.players = players
-	n.conns = make([]ConnectionPair, players)
-	n.ready.Add(2 * (players - 1))
+	ls, err := net.ListenTCP("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
 
-	// accept connections indefintely
-	go func(n *Networker) {
-		ls, err := net.ListenTCP("tcp", ADDRESSES[me])
+	// accept one connection from each player
+	for p := 0; p < players; p++ {
+		var them int
+
+		if p == me {
+			continue
+		}
+
+		// accept next connection
+
+		conn, err := ls.AcceptTCP()
 		if err != nil {
 			panic(err)
 		}
+		c := NewConnection(conn)
 
-		for {
-			// accept new connection
-			conn, err := ls.AcceptTCP()
-			if err != nil {
-				panic(err)
-			}
-			c := NewConnection(conn)
+		// receieve remote identity
 
-			// identify counter party
-			var them int
-			if err := c.Decode(&them); err != nil {
-				panic(err)
-			}
-
-			// add connection
-			if n.conns[them].recv != nil {
-				log.Fatal("Double connection from:", them)
-			}
-			n.conns[them].recv = c
-			n.ready.Done()
-
-			// connect back to higher player number (he is now online, we know)
-			if them > me {
-				if err := n.Connect(them); err != nil {
-					log.Fatalln("Failed to connect to", them, err)
-				}
-			}
+		if err := c.Recv(&them); err != nil {
+			return nil, err
 		}
-	}(&n)
 
-	// connect to lower players
-	for them := 0; them < me; them++ {
-		if err := n.Connect(them); err != nil {
-			log.Fatalln("Failed to connect to", them, err)
+		// check for duplicate connection
+
+		if conns[them] != nil {
+			return nil, errors.New("duplicate connection")
 		}
+
+		log.Println("Got connection from player", them)
+		conns[them] = c
 	}
 
-	// wait for 2 connections from each player
-	n.ready.Wait()
-	return n
+	return conns, nil
+}
+
+func apply_mapping(mapping [][]int, inputs []uint64) [][]uint64 {
+
+	out := make([][]uint64, len(mapping))
+
+	for i, m := range mapping {
+		perm := make([]uint64, len(m))
+		for j, mj := range m {
+			perm[j] = inputs[mj]
+		}
+		out[i] = perm
+	}
+
+	return out
 }
 
 func main() {
@@ -186,6 +171,27 @@ func main() {
 	log.Println("Player:", me)
 	log.Println("Parties:", parties)
 
+	// star topology (everybody connects to player 0)
+
+	var conns []*Connection
+
+	if me == 0 {
+		log.Println("Wait for connections")
+		var err error
+		conns, err = wait_connections(me, parties)
+		if err != nil {
+			panic(err)
+		}
+	} else {
+		log.Println("Connect to player 0")
+		conn0, err := connect(me, 0)
+		if err != nil {
+			panic(err)
+		}
+		conns = make([]*Connection, parties)
+		conns[0] = conn0
+	}
+
 	// start MP-SPDZ
 	mpc, cmd := func() (*MPC, *exec.Cmd) {
 		// pass arguments to MP-SPDZ command
@@ -216,18 +222,12 @@ func main() {
 		return NewMPC(stdout, stdin), cmd
 	}()
 
-	// block and wait for connections
-	networker := NewNetworker(parties, me)
-
 	// setup OIP
-	oip, err := NewOIP(
-		networker.conns,
+	oip := NewOIP(
+		SetupParams(),
 		me,
-		parties,
+		conns,
 	)
-	if err != nil {
-		panic(err)
-	}
 
 	// load inputs for party
 	inputs := func() []uint64 {
@@ -242,11 +242,15 @@ func main() {
 
 	// run MPC circuit
 	log.Println("Start evaluation...")
-	output := run(me, inputs, mpc, oip)
+	output, err := run(me, inputs, mpc, oip)
+	if err != nil {
+		panic(err)
+	}
 
 	// wait for MP-SPDZ to finish
 	if err := cmd.Wait(); err != nil {
 		panic(err)
 	}
 	log.Println("Output:", output)
+
 }

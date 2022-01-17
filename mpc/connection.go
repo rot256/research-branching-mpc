@@ -35,35 +35,56 @@ func DummyPair() (*Connection, *Connection) {
 	return NewConnection(c1), NewConnection(c2)
 }
 
-func NDummies(players int) [][]ConnectionPair {
+func StarDummies(players int) [][]*Connection {
 	// create multi-dimensional array of connections
-	conns := make([][]ConnectionPair, 0)
+	conns := make([][]*Connection, 0)
 	for p1 := 0; p1 < players; p1++ {
-		p1_conns := make([]ConnectionPair, players)
+		p1_conns := make([]*Connection, players)
+		conns = append(conns, p1_conns)
+	}
+
+	// fill with dummies
+	for p1 := 0; p1 < players; p1++ {
+		for p2 := p1 + 1; p2 < players; p2++ {
+			conns[p1][p2] = &Connection{nil, nil}
+			conns[p2][p1] = &Connection{nil, nil}
+		}
+	}
+
+	// create pair-wise connections
+	for p1 := 1; p1 < players; p1++ {
+		c1, c2 := DummyPair()
+		conns[0][p1] = c1
+		conns[p1][0] = c2
+	}
+	return conns
+}
+
+func NDummies(players int) [][]*Connection {
+	// create multi-dimensional array of connections
+	conns := make([][]*Connection, 0)
+	for p1 := 0; p1 < players; p1++ {
+		p1_conns := make([]*Connection, players)
 		conns = append(conns, p1_conns)
 	}
 
 	// create pair-wise connections
 	for p1 := 0; p1 < players; p1++ {
-		for p2 := 0; p2 < players; p2++ {
-			if p1 == p2 {
-				continue
-			}
-
+		for p2 := p1 + 1; p2 < players; p2++ {
 			// create connection
 			c1, c2 := DummyPair()
-			conns[p1][p2].send = c1
-			conns[p2][p1].recv = c2
+			conns[p1][p2] = c1
+			conns[p2][p1] = c2
 		}
 	}
 	return conns
 }
 
-func (c *Connection) Encode(v interface{}) error {
+func (c *Connection) Send(v interface{}) error {
 	return c.enc.Encode(v)
 }
 
-func (c *Connection) Decode(v interface{}) error {
+func (c *Connection) Recv(v interface{}) error {
 	return c.dec.Decode(v)
 }
 

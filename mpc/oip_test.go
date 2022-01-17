@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"math/rand"
 	"sync"
 	"testing"
@@ -22,101 +21,134 @@ func reconstruct(shares [][]uint64) []uint64 {
 	return res
 }
 
-func testOIPn(branches, length, players int) {
+func reconstruct_branches(shares [][][]uint64) [][]uint64 {
+	players := len(shares)
+	branches := len(shares[0])
 
-	fmt.Println("branches:", branches, "length:", length, "players:", players)
+	output := make([][]uint64, branches)
 
-	conns := NDummies(players)
-
-	var wg sync.WaitGroup
-
-	// sample random map
-	m := make([][]int, branches)
 	for b := 0; b < branches; b++ {
+		s := make([][]uint64, players)
+		for p := range shares {
+			s[p] = shares[p][b]
+		}
+		output[b] = reconstruct(s)
+	}
+
+	return output
+}
+
+func testOIPn(branches, length, players, repetitions int) {
+
+	fmt.Println("Branches", branches, "Length", length, "Players", players)
+
+	s := make([][]uint64, players)
+	v := make([][][]uint64, players)
+
+	for p := 0; p < players; p++ {
+		s[p] = random(branches)
+	}
+
+	for p := 0; p < players; p++ {
+		v[p] = make([][]uint64, branches)
+		for b := 0; b < branches; b++ {
+			v[p][b] = random(length)
+		}
+	}
+
+	// reconstruct
+
+	sel := reconstruct(s)
+	bra := reconstruct_branches(v)
+
+	correct := make([]uint64, length)
+
+	for b := 0; b < branches; b++ {
+
 		for i := 0; i < length; i++ {
-			m[b] = append(m[b], rand.Intn(length))
+			correct[i] = add(correct[i], mul(sel[b], bra[b][i]))
 		}
 	}
 
-	// sample random samples for
-	//   B = (b[0] + b[1] + ... + b[p-1])
-	//   V = (v[0] + v[1] + ... + v[p-1])
-	v := make([][]uint64, players)
-	b := make([][]uint64, players)
-	for p := 0; p < players; p++ {
-		v[p] = random(length)
-		b[p] = random(branches)
+	params := SetupParams()
+
+	var oips []*OIP
+	for p, c := range StarDummies(players) {
+		oips = append(oips, NewOIP(params, p, c))
 	}
 
-	// compute
-	//   R = (r[0] + r[1] + ... + r[p-1])
-	//   R =
-	//        B[0] * m[0](V)
-	//      + B[1] * m[1](V)
-	//      + ...
-	//      + B[_] * m[_](V)
-	oip_res := make([][]uint64, players)
-	for p := 0; p < players; p++ {
-		wg.Add(1)
-		go func(players, me int) {
-			defer wg.Done()
-			oip, err := NewOIP(
-				conns[me],
-				me,
-				players,
-			)
-			if err != nil {
-				panic(err)
-			}
+	res_shares := make([][]uint64, players)
 
-			// run OIP and save result
-			res, err := oip.OIPMapping(m, b[me], v[me])
-			if err != nil {
-				panic(err)
-			}
-			oip_res[me] = res
-		}(players, p)
+	// repetions
+
+	fmt.Println("Running...")
+
+	for r := 0; r < repetitions; r++ {
+
+		var wg sync.WaitGroup
+
+		for p, oip := range oips {
+			wg.Add(1)
+
+			go func(p int, oip *OIP) {
+				res, err := oip.Select(
+					s[p],
+					v[p],
+				)
+
+				res_shares[p] = res
+
+				if err != nil {
+					panic(err)
+				}
+
+				wg.Done()
+			}(p, oip)
+		}
+
+		wg.Wait()
 	}
 
-	wg.Wait()
+	//
 
-	// check correctness
-	B := reconstruct(b)
-	V := reconstruct(v)
-	R := reconstruct(oip_res)
-	r := make([]uint64, length)
+	fmt.Println("Check output")
 
-	for i := 0; i < len(r); i++ {
-		for branch := 0; branch < branches; branch++ {
-			f := mul(B[branch], V[m[branch][i]])
-			r[i] = add(r[i], f)
+	result := reconstruct(res_shares)
+
+	if len(result) != len(correct) {
+		panic("Wrong size")
+	}
+
+	for i := range result {
+		if result[i] != correct[i] {
+			panic("Does not match")
 		}
 	}
 
-	for j := 0; j < len(r); j++ {
-		if R[j] != r[j] {
-			log.Fatal("At position: ", j, R[j], " != ", r[j])
-		}
-	}
-
-}
-
-func BenchmarkOIP_P2_B16_L20(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		testOIPn(16, 1<<20, 2)
-	}
-}
-
-func BenchmarkOIP_P2_B2_L20(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		testOIPn(2, 1<<20, 2)
-	}
 }
 
 func TestOIP(t *testing.T) {
-	// testOIPn(2, 1<<20, 2)
-	// testOIPn(2, 100, 2)
-	for i := 0; i < 32; i++ {
-		testOIPn(2, 4097, 2)
+
+	for p := 1; p < 10; p++ {
+		branches := rand.Intn(100)
+		length := rand.Intn(1 << 16)
+
+		testOIPn(branches, length, p, 1)
 	}
+
+	for r := 1; r < 10; r++ {
+		branches := rand.Intn(1 << 8)
+		length := rand.Intn(1 << 16)
+		players := rand.Intn(100) + 1
+		testOIPn(branches, length, players, 1)
+	}
+
+}
+
+func BenchmarkOIP_P2_B2_L20(b *testing.B) {
+	testOIPn(2, 1<<20, 2, b.N)
+}
+
+func BenchmarkOIP_P2_B32_L20(b *testing.B) {
+	testOIPn(2, 1<<20, 32, b.N)
 }
