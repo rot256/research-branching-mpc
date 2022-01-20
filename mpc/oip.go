@@ -311,12 +311,295 @@ func (o *OIP) putEncryptor(e bfv.Encryptor) {
 	o.encryptor.Put(e)
 }
 
-func (o *OIP) Select(sel []uint64, v [][]uint64) ([]uint64, error) {
-	if len(sel) != len(v) {
+func (o *OIP) Multiply(left []uint64, right []uint64) ([]uint64, error) {
+	if len(left) != len(right) {
+		log.Panicln("Left and right does not match")
+	}
+
+	// check if one-time key generation setup required
+
+	if o.pk == nil {
+		o.Log("Running setup")
+		if err := o.Setup(); err != nil {
+			return nil, err
+		}
+	}
+
+	// calculate number of blocks
+
+	len := len(left)
+	block_size := 1 << o.params.LogN()
+	blocks := (len + (block_size - 1)) / block_size
+
+	// encrypt all the left shares
+
+	left_blocks := make([][]uint64, blocks)
+	for i := 0; i < blocks; i++ {
+		s := i * block_size
+		e := min((i+1)*block_size, len)
+		left_blocks[i] = left[s:e]
+	}
+
+	left_cts := o.packEncrypt(left_blocks)
+
+	// aggregate ciphertexts
+
+	if err := o.aggregateCTS(left_cts); err != nil {
+		return nil, err
+	}
+
+	// multiply left encryption by right shares
+
+	res_cts := o.mulCTS(left_cts, right)
+
+	// aggregate result ciphertext
+
+	if err := o.aggregateCTS(res_cts); err != nil {
+		return nil, err
+	}
+
+	// threshold decrypt results to shares
+
+	shares, err := o.E2S(res_cts)
+	if err != nil {
+		return nil, err
+	}
+
+	// convert shares back to array
+
+	return o.sharesToArray(shares)[:len], nil
+}
+
+func (o *OIP) sharesToArray(shares []*rlwe.AdditiveShare) []uint64 {
+
+	block_size := 1 << o.params.LogN()
+
+	pt := bfv.NewPlaintextRingT(o.params)
+	res := make([]uint64, len(shares)*block_size)
+	enc := o.getEncoder()
+
+	for i, share := range shares {
+		s := i * block_size
+		e := (i + 1) * block_size
+		pt.Value.Copy(&share.Value)
+		enc.DecodeUint(pt, res[s:e])
+	}
+
+	o.putEncoder(enc)
+
+	return res
+}
+
+// Computes:
+// [out] = [cts] * vec
+func (o *OIP) mulCTS(cts []*bfv.Ciphertext, vec []uint64) []*bfv.Ciphertext {
+
+	var wg sync.WaitGroup
+
+	blocks := len(cts)
+	block_size := 1 << o.params.LogN()
+
+	res := make([]*bfv.Ciphertext, blocks)
+
+	for b := 0; b < blocks; b++ {
+		wg.Add(1)
+
+		go func(b int) {
+			t := bfv.NewCiphertext(o.params, 1)
+			p := bfv.NewPlaintextMul(o.params)
+			s := min(len(vec), b*block_size)
+			e := min(len(vec), (b+1)*block_size)
+
+			// obtain an encoder/evaluator
+			enco := o.getEncoder()
+			eval := o.getEvaluator()
+
+			// encode and multiply (slow)
+			enco.EncodeUintMul(vec[s:e], p)
+			eval.Mul(cts[b], p, t)
+
+			// return resources to pool
+			o.putEncoder(enco)
+			o.putEvaluator(eval)
+			wg.Done()
+
+			res[b] = t
+		}(b)
+	}
+
+	wg.Wait()
+
+	return res
+}
+
+// Computes:
+// [out] = \sum_j [cts_j] * vec_j
+func (o *OIP) tensorCTS(blocks int, cts []*bfv.Ciphertext, vecs [][]uint64) []*bfv.Ciphertext {
+	if len(cts) != len(vecs) {
 		log.Panicln("Dimensions does not match")
 	}
 
-	branches := len(sel)
+	o.Log("Generate share of inner product")
+
+	acc := make([]*bfv.Ciphertext, blocks)
+	block_size := 1 << o.params.LogN()
+
+	// execute every block in parallel (good for large branches)
+
+	var wg1 sync.WaitGroup
+
+	for b := 0; b < blocks; b++ {
+
+		wg1.Add(1)
+
+		go func(b int) {
+
+			// execute every branch in each block in parallel (good for many branches)
+
+			var wg2 sync.WaitGroup
+			var lock sync.Mutex
+
+			sum := bfv.NewCiphertext(o.params, 1)
+
+			for i, vec := range vecs {
+				wg2.Add(1)
+
+				go func(i int, b int, vec []uint64) {
+					t := bfv.NewCiphertext(o.params, 1)
+					p := bfv.NewPlaintextMul(o.params)
+					s := min(len(vec), b*block_size)
+					e := min(len(vec), (b+1)*block_size)
+
+					// obtain an encoder/evaluator
+					enco := o.getEncoder()
+					eval := o.getEvaluator()
+
+					// encode and multiply (slow)
+					enco.EncodeUintMul(vec[s:e], p)
+					eval.Mul(cts[i], p, t)
+
+					// take lock and add (fast)
+					lock.Lock()
+					eval.Add(t, sum, sum)
+					lock.Unlock()
+
+					// return resources to pool
+					o.putEncoder(enco)
+					o.putEvaluator(eval)
+					wg2.Done()
+				}(i, b, vec)
+			}
+
+			// save accumulated block
+
+			acc[b] = sum
+
+			wg2.Wait()
+			wg1.Done()
+		}(b)
+	}
+
+	wg1.Wait()
+
+	return acc
+}
+
+func (o *OIP) aggregateCTS(cts []*bfv.Ciphertext) error {
+
+	if o.IsP0() {
+
+		dim := len(cts)
+
+		o.Log("Acting as ciphertext aggregator")
+
+		locks := make([]sync.Mutex, len(cts))
+		status := make(chan error, o.n)
+
+		for p := 1; p < o.n; p++ {
+			go func(p int) {
+				// allocate ciphertext
+				ctp := make([]*bfv.Ciphertext, dim)
+				for i := 0; i < dim; i++ {
+					ctp[i] = bfv.NewCiphertext(o.params, 1)
+				}
+
+				// receieve from player
+				if err := o.Pi(p).Recv(&ctp); err != nil {
+					status <- err
+					return
+				}
+
+				// add to accumulator
+				evl := o.getEvaluator()
+				for i := 0; i < dim; i++ {
+					locks[i].Lock()
+					evl.Add(ctp[i], cts[i], cts[i])
+					locks[i].Unlock()
+				}
+				o.putEvaluator(evl)
+
+				status <- nil
+			}(p)
+		}
+
+		if err := collect_errors(status, o.n-1); err != nil {
+			return err
+		}
+
+		o.Log("Broadcast aggregated encryptions to everyone else")
+
+		return o.broadcast(cts)
+
+	} else {
+
+		o.Log("Send shares to player 0")
+
+		if err := o.Send0(cts); err != nil {
+			return err
+		}
+
+		o.Log("Receieve aggregated encryption from player 0")
+
+		return o.Recv0(&cts)
+	}
+}
+
+func (o *OIP) packEncrypt(packs [][]uint64) []*bfv.Ciphertext {
+
+	var wg sync.WaitGroup
+
+	cts := make([]*bfv.Ciphertext, len(packs))
+
+	for i, pack := range packs {
+		wg.Add(1)
+		go func(i int, pack []uint64) {
+			// encode plaintext
+			pt := bfv.NewPlaintext(o.params)
+			enco := o.getEncoder()
+			enco.EncodeUint(pack, pt)
+			o.putEncoder(enco)
+
+			// encrypt
+			ct := bfv.NewCiphertext(o.params, 1)
+			encr := o.getEncryptor()
+			encr.Encrypt(pt, ct)
+			o.putEncryptor(encr)
+
+			// store share
+			cts[i] = ct
+			wg.Done()
+		}(i, pack)
+	}
+
+	wg.Wait()
+
+	return cts
+}
+
+func (o *OIP) Select(sel []uint64, branches [][]uint64) ([]uint64, error) {
+	if len(sel) != len(branches) {
+		log.Panicln("Dimensions does not match")
+	}
 
 	// check if one-time key generation setup required
 	if o.pk == nil {
@@ -328,9 +611,9 @@ func (o *OIP) Select(sel []uint64, v [][]uint64) ([]uint64, error) {
 
 	// maximum length of any vector in v
 	max_len := 0
-	for i := 0; i < len(v); i++ {
-		if len(v[i]) > max_len {
-			max_len = len(v[i])
+	for i := 0; i < len(branches); i++ {
+		if len(branches[i]) > max_len {
+			max_len = len(branches[i])
 		}
 	}
 
@@ -344,251 +627,39 @@ func (o *OIP) Select(sel []uint64, v [][]uint64) ([]uint64, error) {
 
 	o.Log("Generate encrypted selector shares")
 
-	cts := make([]*bfv.Ciphertext, branches)
+	sel_blocks := make([][]uint64, len(sel))
+	for i, s := range sel {
+		sel_blocks[i] = dup(s, block_size)
+	}
 
-	func() {
-		var wg sync.WaitGroup
-
-		for i, s := range sel {
-			wg.Add(1)
-			go func(i int, s uint64) {
-				// encode plaintext
-				pt := bfv.NewPlaintext(o.params)
-				enco := o.getEncoder()
-				enco.EncodeUint(dup(s, block_size), pt)
-				o.putEncoder(enco)
-
-				// encrypt
-				ct := bfv.NewCiphertext(o.params, 1)
-				encr := o.getEncryptor()
-				encr.Encrypt(pt, ct)
-				o.putEncryptor(encr)
-
-				// store share
-				cts[i] = ct
-				wg.Done()
-			}(i, s)
-		}
-
-		wg.Wait()
-	}()
+	cts_sel := o.packEncrypt(sel_blocks)
 
 	// send selector shares to player 0 and aggregate
 
-	if o.IsP0() {
-
-		o.Log("Aggregate encrypted selector shares")
-
-		locks := make([]sync.Mutex, len(cts))
-		status := make(chan error, o.n)
-
-		for p := 1; p < o.n; p++ {
-			go func(p int) {
-				// allocate ciphertext
-				ctp := make([]*bfv.Ciphertext, blocks)
-				for i := 0; i < blocks; i++ {
-					ctp[i] = bfv.NewCiphertext(o.params, 1)
-				}
-
-				// receieve from player
-				if err := o.Pi(p).Recv(&ctp); err != nil {
-					status <- err
-					return
-				}
-
-				// add to accumulator
-				evl := o.getEvaluator()
-				for i := 0; i < branches; i++ {
-					locks[i].Lock()
-					evl.Add(ctp[i], cts[i], cts[i])
-					locks[i].Unlock()
-				}
-				o.putEvaluator(evl)
-
-				status <- nil
-			}(p)
-		}
-
-		if err := collect_errors(status, o.n-1); err != nil {
-			return nil, err
-		}
-
-	} else {
-
-		o.Log("Send selector shares to player 0")
-
-		if err := o.Send0(cts); err != nil {
-			return nil, err
-		}
-	}
-
-	// broadcast / receieve aggreated ciphertexts of selectors
-
-	if o.IsP0() {
-		o.Log("Broadcast aggregated encryptions of selectors")
-		if err := o.broadcast(cts); err != nil {
-			return nil, err
-		}
-	} else {
-		o.Log("Receieve aggregated encryptions of selectors")
-		if err := o.Recv0(&cts); err != nil {
-			return nil, err
-		}
+	if err := o.aggregateCTS(cts_sel); err != nil {
+		return nil, err
 	}
 
 	// generate local share of inner product
 
 	o.Log("Generate share of inner product")
-	ct_acc := make([]*bfv.Ciphertext, blocks)
 
-	func() {
-
-		// execute every block in parallel (good for large branches)
-
-		var wg1 sync.WaitGroup
-
-		for b := 0; b < blocks; b++ {
-
-			wg1.Add(1)
-
-			go func(b int) {
-
-				// execute every branch in each block in parallel (good for many branches)
-
-				var wg2 sync.WaitGroup
-				var lock sync.Mutex
-
-				acc := bfv.NewCiphertext(o.params, 1)
-
-				for i, vec := range v {
-					wg2.Add(1)
-
-					go func(i int, b int, vec []uint64) {
-						t := bfv.NewCiphertext(o.params, 1)
-						p := bfv.NewPlaintextMul(o.params)
-						s := min(len(vec), b*block_size)
-						e := min(len(vec), (b+1)*block_size)
-
-						// obtain an encoder/evaluator
-						enco := o.getEncoder()
-						eval := o.getEvaluator()
-
-						// encode and multiply (slow)
-						enco.EncodeUintMul(vec[s:e], p)
-						eval.Mul(cts[i], p, t)
-
-						// take lock and add (fast)
-						lock.Lock()
-						eval.Add(t, acc, acc)
-						lock.Unlock()
-
-						// return resources to pool
-						o.putEncoder(enco)
-						o.putEvaluator(eval)
-						wg2.Done()
-					}(i, b, vec)
-				}
-
-				// save accumulated block
-
-				ct_acc[b] = acc
-
-				wg2.Wait()
-				wg1.Done()
-			}(b)
-		}
-
-		wg1.Wait()
-	}()
+	cts_res := o.tensorCTS(blocks, cts_sel, branches)
 
 	// aggregate the shares of the inner product
 
-	if o.IsP0() {
-		locks := make([]sync.Mutex, len(ct_acc))
-		status := make(chan error, o.n)
-
-		o.Log("Aggregating shares of inner product")
-
-		for p := 1; p < o.n; p++ {
-
-			// handle every player in parallel (good for many players)
-
-			go func(p int, status chan error) {
-				ctp := make([]*bfv.Ciphertext, blocks)
-				for b := 0; b < blocks; b++ {
-					ctp[b] = bfv.NewCiphertext(o.params, 1)
-				}
-
-				if err := o.Pi(p).Recv(&ctp); err != nil {
-					status <- err
-				}
-
-				eval := o.getEvaluator()
-
-				for i := range ct_acc {
-					locks[i].Lock()
-					eval.Add(ctp[i], ct_acc[i], ct_acc[i])
-					locks[i].Unlock()
-				}
-
-				o.putEvaluator(eval)
-
-				status <- nil
-			}(p, status)
-
-		}
-
-		if err := collect_errors(status, o.n-1); err != nil {
-			return nil, err
-		}
-
-	} else {
-
-		o.Log("Send shares of inner product")
-
-		if err := o.Send0(ct_acc); err != nil {
-			return nil, err
-		}
-	}
-
-	// broadcast / receieve aggregated ciphertext of inner product
-
-	if o.IsP0() {
-		o.Log("Broadcast aggregated encryptions of inner product")
-		if err := o.broadcast(ct_acc); err != nil {
-			return nil, err
-		}
-	} else {
-		o.Log("Receieve aggregated encryptions of inner product")
-		if err := o.Recv0(&ct_acc); err != nil {
-			return nil, err
-		}
+	if err := o.aggregateCTS(cts_res); err != nil {
+		return nil, err
 	}
 
 	// run distributed decryption
 
-	shares, err := o.E2S(ct_acc)
+	shares, err := o.E2S(cts_res)
 	if err != nil {
 		return nil, err
 	}
 
 	// convert shares back to array
 
-	res := make([]uint64, len(shares)*block_size)
-
-	func() {
-		enc := o.getEncoder()
-		defer o.putEncoder(enc)
-
-		pt := bfv.NewPlaintextRingT(o.params)
-
-		for i, share := range shares {
-			s := i * block_size
-			e := (i + 1) * block_size
-			pt.Value.Copy(&share.Value)
-			enc.DecodeUint(pt, res[s:e])
-		}
-	}()
-
-	return res[:max_len], nil
+	return o.sharesToArray(shares)[:max_len], nil
 }
