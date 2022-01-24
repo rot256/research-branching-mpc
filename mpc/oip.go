@@ -269,8 +269,8 @@ func (o *OIP) E2S(cts []*bfv.Ciphertext) ([]*rlwe.AdditiveShare, error) {
 	return secretShares, nil
 }
 
-func dup(v uint64, len int) []uint64 {
-	arr := make([]uint64, len)
+func dup(v FieldElem, len int) []FieldElem {
+	arr := make([]FieldElem, len)
 	for i := 0; i < len; i++ {
 		arr[i] = v
 	}
@@ -311,7 +311,7 @@ func (o *OIP) putEncryptor(e bfv.Encryptor) {
 	o.encryptor.Put(e)
 }
 
-func (o *OIP) Multiply(left []uint64, right []uint64) ([]uint64, error) {
+func (o *OIP) Multiply(left []FieldElem, right []FieldElem) ([]FieldElem, error) {
 	if len(left) != len(right) {
 		log.Panicln("Left and right does not match")
 	}
@@ -333,7 +333,7 @@ func (o *OIP) Multiply(left []uint64, right []uint64) ([]uint64, error) {
 
 	// encrypt all the left shares
 
-	left_blocks := make([][]uint64, blocks)
+	left_blocks := make([][]FieldElem, blocks)
 	for i := 0; i < blocks; i++ {
 		s := i * block_size
 		e := min((i+1)*block_size, len)
@@ -370,12 +370,12 @@ func (o *OIP) Multiply(left []uint64, right []uint64) ([]uint64, error) {
 	return o.sharesToArray(shares)[:len], nil
 }
 
-func (o *OIP) sharesToArray(shares []*rlwe.AdditiveShare) []uint64 {
+func (o *OIP) sharesToArray(shares []*rlwe.AdditiveShare) []FieldElem {
 
 	block_size := 1 << o.params.LogN()
 
 	pt := bfv.NewPlaintextRingT(o.params)
-	res := make([]uint64, len(shares)*block_size)
+	res := make([]FieldElem, len(shares)*block_size)
 	enc := o.getEncoder()
 
 	for i, share := range shares {
@@ -392,7 +392,7 @@ func (o *OIP) sharesToArray(shares []*rlwe.AdditiveShare) []uint64 {
 
 // Computes:
 // [out] = [cts] * vec
-func (o *OIP) mulCTS(cts []*bfv.Ciphertext, vec []uint64) []*bfv.Ciphertext {
+func (o *OIP) mulCTS(cts []*bfv.Ciphertext, vec []FieldElem) []*bfv.Ciphertext {
 
 	var wg sync.WaitGroup
 
@@ -434,7 +434,7 @@ func (o *OIP) mulCTS(cts []*bfv.Ciphertext, vec []uint64) []*bfv.Ciphertext {
 
 // Computes:
 // [out] = \sum_j [cts_j] * vec_j
-func (o *OIP) tensorCTS(blocks int, cts []*bfv.Ciphertext, vecs [][]uint64) []*bfv.Ciphertext {
+func (o *OIP) tensorCTS(blocks int, cts []*bfv.Ciphertext, vecs [][]FieldElem) []*bfv.Ciphertext {
 	if len(cts) != len(vecs) {
 		log.Panicln("Dimensions does not match")
 	}
@@ -464,7 +464,7 @@ func (o *OIP) tensorCTS(blocks int, cts []*bfv.Ciphertext, vecs [][]uint64) []*b
 			for i, vec := range vecs {
 				wg2.Add(1)
 
-				go func(i int, b int, vec []uint64) {
+				go func(i int, b int, vec []FieldElem) {
 					t := bfv.NewCiphertext(o.params, 1)
 					p := bfv.NewPlaintextMul(o.params)
 					s := min(len(vec), b*block_size)
@@ -564,7 +564,7 @@ func (o *OIP) aggregateCTS(cts []*bfv.Ciphertext) error {
 	}
 }
 
-func (o *OIP) packEncrypt(packs [][]uint64) []*bfv.Ciphertext {
+func (o *OIP) packEncrypt(packs [][]FieldElem) []*bfv.Ciphertext {
 
 	var wg sync.WaitGroup
 
@@ -572,7 +572,7 @@ func (o *OIP) packEncrypt(packs [][]uint64) []*bfv.Ciphertext {
 
 	for i, pack := range packs {
 		wg.Add(1)
-		go func(i int, pack []uint64) {
+		go func(i int, pack []FieldElem) {
 			// encode plaintext
 			pt := bfv.NewPlaintext(o.params)
 			enco := o.getEncoder()
@@ -596,7 +596,7 @@ func (o *OIP) packEncrypt(packs [][]uint64) []*bfv.Ciphertext {
 	return cts
 }
 
-func (o *OIP) Select(sel []uint64, branches [][]uint64) ([]uint64, error) {
+func (o *OIP) Select(sel []FieldElem, branches [][]FieldElem) ([]FieldElem, error) {
 	if len(sel) != len(branches) {
 		log.Panicln("Dimensions does not match")
 	}
@@ -627,7 +627,7 @@ func (o *OIP) Select(sel []uint64, branches [][]uint64) ([]uint64, error) {
 
 	o.Log("Generate encrypted selector shares")
 
-	sel_blocks := make([][]uint64, len(sel))
+	sel_blocks := make([][]FieldElem, len(sel))
 	for i, s := range sel {
 		sel_blocks[i] = dup(s, block_size)
 	}

@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-func reconstruct(shares [][]uint64) []uint64 {
+func reconstruct(shares [][]FieldElem) []FieldElem {
 	size := len(shares[0])
-	res := make([]uint64, size)
+	res := make([]FieldElem, size)
 	for _, s := range shares {
 		if len(s) != size {
 			panic("Invalid number of shares")
@@ -21,14 +21,14 @@ func reconstruct(shares [][]uint64) []uint64 {
 	return res
 }
 
-func reconstruct_branches(shares [][][]uint64) [][]uint64 {
+func reconstruct_branches(shares [][][]FieldElem) [][]FieldElem {
 	players := len(shares)
 	branches := len(shares[0])
 
-	output := make([][]uint64, branches)
+	output := make([][]FieldElem, branches)
 
 	for b := 0; b < branches; b++ {
-		s := make([][]uint64, players)
+		s := make([][]FieldElem, players)
 		for p := range shares {
 			s[p] = shares[p][b]
 		}
@@ -40,8 +40,8 @@ func reconstruct_branches(shares [][][]uint64) [][]uint64 {
 
 func testMuln(length, players, repetitions int) {
 
-	left := make([][]uint64, players)
-	right := make([][]uint64, players)
+	left := make([][]FieldElem, players)
+	right := make([][]FieldElem, players)
 
 	for p := 0; p < players; p++ {
 		left[p] = random(length)
@@ -50,7 +50,7 @@ func testMuln(length, players, repetitions int) {
 
 	out_l := reconstruct(left)
 	out_r := reconstruct(right)
-	out_m := make([]uint64, len(out_l))
+	out_m := make([]FieldElem, len(out_l))
 	for i := 0; i < len(out_m); i++ {
 		out_m[i] = mul(out_l[i], out_r[i])
 	}
@@ -62,7 +62,7 @@ func testMuln(length, players, repetitions int) {
 		oips = append(oips, NewOIP(params, p, c))
 	}
 
-	res_shares := make([][]uint64, players)
+	res_shares := make([][]FieldElem, players)
 
 	// repetions
 
@@ -114,15 +114,15 @@ func testOIPn(branches, length, players, repetitions int) {
 
 	fmt.Println("Branches", branches, "Length", length, "Players", players)
 
-	s := make([][]uint64, players)
-	v := make([][][]uint64, players)
+	s := make([][]FieldElem, players)
+	v := make([][][]FieldElem, players)
 
 	for p := 0; p < players; p++ {
 		s[p] = random(branches)
 	}
 
 	for p := 0; p < players; p++ {
-		v[p] = make([][]uint64, branches)
+		v[p] = make([][]FieldElem, branches)
 		for b := 0; b < branches; b++ {
 			v[p][b] = random(length)
 		}
@@ -133,7 +133,7 @@ func testOIPn(branches, length, players, repetitions int) {
 	sel := reconstruct(s)
 	bra := reconstruct_branches(v)
 
-	correct := make([]uint64, length)
+	correct := make([]FieldElem, length)
 
 	for b := 0; b < branches; b++ {
 		for i := 0; i < length; i++ {
@@ -148,7 +148,7 @@ func testOIPn(branches, length, players, repetitions int) {
 		oips = append(oips, NewOIP(params, p, c))
 	}
 
-	res_shares := make([][]uint64, players)
+	res_shares := make([][]FieldElem, players)
 
 	// repetions
 
