@@ -1,9 +1,12 @@
 import sys
 import random
 
-branches = int(sys.argv[1])
+print(sys.argv)
 
-length = int(sys.argv[2])
+branches, length = sys.argv[1].strip().split('-')
+
+length = int(length)
+branches = int(branches)
 
 def random_branch(wires, length):
     circ = []
@@ -44,7 +47,7 @@ if __name__ == '__main__':
         for ins in random_branch(wires, length):
             circ.append(ins)
 
-    with open(sys.argv[3], 'w') as f:
+    with open(sys.argv[2], 'w') as f:
         for c in circ:
             f.write(c + '\n')
 

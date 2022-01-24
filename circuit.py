@@ -128,6 +128,9 @@ class Disjunction(Gate):
             self.progs.append(prog)
             self.perms.append(perm)
 
+        # compute levels accross branches
+        # TODO
+
     def __init__(
         self,
         selector,
@@ -229,27 +232,144 @@ class Ctx:
     def prog(self, l=''):
         self.runner.append(l)
 
+    def compile_cdn(self, gates):
+        self.prog('package main')
+        self.prog('')
+        self.prog('func run(me int, inputs []FieldElem, oip *OIP) ([]uint64, error) {')
+        self.prog('    nxt_input := 0')
+        self.prog('    output := make([]FieldElem, 16)')
+        self.prog('    wires := make([]Share, 1 << 10)')
+        self.prog('    cdn := NewCDN(oip)')
+
+        for (w, g) in enumerate(gates):
+            if isinstance(g, Input):
+                self.prog('    if me == {player} {{'.format(player=g.player))
+                self.prog('        wires[{num}] = inputs[nxt_input]'.format(num=w))
+                self.prog('    }')
+
+            elif isinstance(g, Output):
+                self.prog('    out{idx}, err := cdn.Reconstruct(wires[{num}])...)'.format(num=g.wire, idx=w))
+                self.prog('    if err != nil { return err }')
+                self.prog('    output = append(output, out{idx}...)'.format(idx=w))
+
+            elif isinstance(g, Mul):
+                assert False, 'Unimplemented'
+
+            elif isinstance(g, Add):
+                assert False, 'Unimplemented'
+
+            elif isinstance(g, Disjunction):
+                inputs = {}
+
+                g.translate(w)
+
+                self.prog('err := func() error {')
+
+                self.circ('')
+                self.circ('# pack selection wires')
+                self.pack('b', wires(g.selector))
+
+                # compute the gate programming (linear combination)
+                self.circ('')
+                self.circ('# compute gate programming')
+                self.circuit.append('g = sint.Array(size={dim})'.format(dim=g.branch_size))
+                for i in range(g.branch_size):
+                    select = ['b[%d]' % j for (j, (sel, prog)) in enumerate(zip(g.selector, g.progs)) if prog[i]]
+
+                    if len(select) == 0:
+                        self.circuit.append('g[{num}] = 0'.format(num=i))
+                    elif len(select) == len(g.selector):
+                        self.circuit.append('g[{num}] = 1'.format(num=i))
+                    else:
+                        self.circuit.append('g[{num}] = {sel}'.format(
+                            num=i,
+                            sel=' + '.join(select)
+                        ))
+
+                out_dim = len(g.disj_inputs) + g.branch_size
+                in_dim = g.branch_size * 2
+
+                # export permutation to runner
+                self.prog('mapping := [][]int{')
+                for perm in g.perms:
+                    self.prog('    {' + ','.join(map(str, perm)) +'},')
+                self.prog('}')
+
+                # execute OIP protocol on random mask
+                self.additive_random('out', size=out_dim)       # export
+                self.additive_output('b', size=len(g.selector)) # export
+                self.prog('v := apply_mapping(mapping, out)')
+                self.prog('D, err := oip.Select(b, v)')
+                self.prog('if err != nil { return err }')
+
+                # input back into the MPC
+                self.additive_input('D', size=in_dim)
+
+                #
+                self.circ('')
+                self.circ('# pack outputs to the disjunction')
+                self.circ('u = cint.Array(size={dim})'.format(dim=out_dim))
+                for i, w in enumerate(g.disj_inputs):
+                    self.circ('u[{num}] = (out[{num}] + {wire}).reveal()'.format(
+                        num=i,
+                        wire=wire(w)
+                    ))
+
+
+                next_idx = len(g.disj_inputs)
+                for i in range(g.branch_size):
+                    self.circ('')
+                    self.circ('# gate number %d' % i)
+                    ws = (2*i, 2*i+1)
+                    ns = ('l', 'r')
+                    for n, w in zip(ns, ws):
+                        summation = ['(b[{num}] * u[{idx}])'.format(num=j, idx=perm[w]) for (j, perm) in enumerate(g.perms)]
+                        self.circ('{name} = {summation} - D[{idx}]'.format(
+                            summation=' + '.join(summation),
+                            name=n,
+                            idx=w
+                        ))
+
+
+        self.prog('}')
+
+
     def compile(self, gates):
         self.prog('package main')
         self.prog('')
         self.prog('func run(player  int, inputs []uint64, mpc *MPC, oip *OIP) ([]uint64, error) {')
         self.prog('output := make([]uint64, 0, 128)')
         self.prog('nxt := 0')
+
+
+        def flush_inputs(inputs):
+            for player in sorted(inputs.keys()):
+                length = 0
+                for (w, g) in inputs[player]: # length of input
+                    self.circ(
+                        '{out} = sint.get_input_from({player}, size={dim})'.format(
+                            out=wire(w),
+                            player=g.player,
+                            dim=g.dim
+                        )
+                    )
+                    length += g.dim
+
+                # deliver single input size
+                self.prog('if player == {player} {{'.format(player=player))
+                self.prog('    mpc.TryInput(inputs[nxt:nxt+{length}])'.format(length=length))
+                self.prog('    nxt += {length}'.format(length=length))
+                self.prog('}')
+
+        inputs = {}
+
+
         for (w, g) in enumerate(gates):
             if isinstance(g, Input):
-                self.circ(
-                    '{out} = sint.get_input_from({player}, size={dim})'.format(
-                        out=wire(w),
-                        player=g.player,
-                        dim=g.dim
-                    )
-                )
-                self.prog('if player == {player} {{'.format(
-                    player=g.player
-                ))
-                self.prog('    mpc.TryInput([]uint64{inputs[nxt]})')
-                self.prog('    nxt += 1')
-                self.prog('}')
+                try:
+                    inputs[g.player].append((w, g))
+                except KeyError:
+                    inputs[g.player] = [(w, g)]
 
             elif isinstance(g, Output):
                 self.circ('output({wire}.reveal())'.format(
@@ -288,6 +408,9 @@ class Ctx:
                 )
 
             elif isinstance(g, Disjunction):
+                flush_inputs(inputs)
+                inputs = {}
+
                 g.translate(w)
                 self.prog('err := func() error {')
 
@@ -370,10 +493,11 @@ class Ctx:
                 self.prog('}()')
                 self.prog('if err != nil { return nil, err }')
 
-
-
             else:
                 assert False
+
+        flush_inputs(inputs)
+        inputs = {}
 
         self.prog('return output, nil')
         self.prog('}')

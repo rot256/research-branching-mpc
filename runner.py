@@ -1,7 +1,7 @@
 from pwn import *
 
 ADDRESSES = [
-    '127.0.0.1:%d' % (i + 7000) for i in range(8)
+    '127.0.0.1:%d' % (i + 7000) for i in range(200)
 ]
 
 with open('/tmp/players.txt', 'w') as f:
@@ -57,32 +57,23 @@ print('Players:', players)
 print('Branches:', branches)
 
 params = '%s-%s-%s' % (length, branches, players)
+rparams = '%s-%s' % (length, branches)
 
 if not RAND:
 
     print('Generate circuit and runner')
 
-    p = process([
+    follow(process([
         'make',
         'bmpc-%s' % params,
         'MP-SPDZ/Programs/Schedules/bmpc-%s.sch' % params
-    ])
-
-    follow(p)
-
-else:
-    follow(process([
-        'python3',
-        './random_branches.py',
-        str(branches),
-        str(length),
-        'MP-SPDZ/Programs/Source/rmpc.mpc',
     ]))
 
+else:
+
     follow(process([
-        './MP-SPDZ/compile.py',
-        '--prime=65537',
-        'rmpc'
+        'make',
+        'MP-SPDZ/Programs/Schedules/rmpc-%s.sch' % rparams,
     ]))
 
 
@@ -93,13 +84,13 @@ ses = []
 if RAND:
     for p in range(players):
         print('Starting', p)
-        time.sleep(0.3)
+        time.sleep(0.05)
         ses.append(start_random(players, p))
 
 else:
     for p in range(players):
         print('Starting', p)
-        time.sleep(0.3)
+        time.sleep(0.05)
         ses.append(start_player(players, p, params))
 
 start = time.time()
