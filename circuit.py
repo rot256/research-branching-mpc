@@ -114,10 +114,14 @@ class Disjunction(Gate):
         for branch in self.branches:
             prog = []
             perm = []
-            for gate in branch:
-                for inp in gate.inputs():
-                    perm.append(t_wire(inp))
 
+            max_wire = len(ext_l)
+
+            for i, gate in enumerate(branch):
+                # translate inputs
+                for inp in gate.inputs(): perm.append(t_wire(inp))
+
+                # translate programming to bits
                 if isinstance(gate, Add) or isinstance(gate, Mul):
                     prog.append(CONST_ADD if isinstance(gate, Add) else CONST_MUL)
                 else:
@@ -128,13 +132,30 @@ class Disjunction(Gate):
             self.progs.append(prog)
             self.perms.append(perm)
 
-        # compute levels accross branches
-        # TODO
+        # compute levels accross branche
+        self.levels = []
+        max_wire = len(ext_l)
+        for i in range(self.branch_size):
+            for perm in self.perms:
+                a = perm[i*2]
+                b = perm[i*2+1]
+                if a > max_wire or b > max_wire:
+                    self.levels.append(i - 1)
+                    max_wire = (i - 1) + len(ext_l)
+
+        self.levels.append(self.branch_size - 1)
+        print('Levels:', self.levels, len(self.levels))
+
+        if self.fixed_levels:
+            self.levels = self.fixed_levels
+
+        assert len(self.levels) <= self.branch_size
 
     def __init__(
         self,
         selector,
         branches,
+        fixed_levels = None
     ):
         assert len(selector) == len(branches)
 
@@ -146,6 +167,7 @@ class Disjunction(Gate):
         self.selector = selector
         self.branches = branches
         self.branch_size = branch_size
+        self.fixed_levels = fixed_levels
 
 class Ctx:
     def __init__(self, players, prime):
@@ -341,7 +363,6 @@ class Ctx:
         self.prog('output := make([]uint64, 0, 128)')
         self.prog('nxt := 0')
 
-
         def flush_inputs(inputs):
             for player in sorted(inputs.keys()):
                 length = 0
@@ -535,22 +556,54 @@ import random
 
 random.seed(0x3333) # reproducable results
 
-def random_circuit(wires, start, length=4096):
-    out = []
-    wires = list(wires)
-    for i in range(length):
-        left   = random.choice(wires)
-        right  = random.choice(wires)
-        choice = random.randrange(2)
-        if choice == 0:
-            out.append(Add(left, right))
-        if choice == 1:
-            out.append(Mul(left, right))
-        wires.append(i + start)
-    return out
+def comparison(start, a, b):
+    assert len(a) == len(b)
+    pass
 
-def random_disj(sel, wires, start, length=4096):
-    return Disjunction(sel, [random_circuit(wires, start, length) for _ in range(len(sel))])
+from itertools import cycle
+
+def random_circuit(wires, start, blocks=cycle([1]), length=4096, leveled=False):
+    gates = []
+    inputs = list(wires)
+    outputs = []
+    next_block = next(blocks)
+    for i in range(length):
+        left   = random.choice(inputs)
+        right  = random.choice(inputs)
+        choice = random.randrange(2)
+
+        if choice == 0:
+            gates.append(Add(left, right))
+        if choice == 1:
+            gates.append(Mul(left, right))
+
+        # add outputs to inputs
+        outputs.append(i + start)
+        if len(outputs) >= next_block:
+            if leveled:
+                inputs = outputs
+            else:
+                inputs += outputs
+
+            outputs = []
+            try:
+                next_block = next(blocks)
+            except StopIteration:
+                next_block = None
+
+    inputs += outputs
+
+    return gates
+
+def random_disj(sel, wires, start, blocks=cycle([4096]), length=1<<15):
+    return Disjunction(sel, [random_circuit(wires, start, blocks=blocks, length=length) for _ in range(len(sel))])
+
+def random_leveled(sel, wires, start, log_length=16):
+    blocks = [1 << i for i in range(log_length+1)][::-1] # starts wide
+    length = (1 << (log_length+1)) - 1
+    return Disjunction(sel, [
+        random_circuit(wires, start, blocks=iter(blocks), length=length, leveled=False) for _ in range(len(sel))
+    ])
 
 if __name__ == '__main__':
 
@@ -606,11 +659,13 @@ if __name__ == '__main__':
     ] + [Input(1)] * branches
 
     sel = list(range(3, 3+branches))
-    prog.append(random_disj(sel, wires=list(range(len(prog))), start=len(prog), length=length))
+    # prog.append(random_disj(sel, wires=list(range(len(prog))), start=len(prog), length=length))
+    prog.append(random_leveled(sel, wires=list(range(len(prog))), start=len(prog), log_length=16))
     prog.append(Output(len(prog)))
 
     ctx = Ctx(parties, prime=65537)
-    ctx.compile(prog)
+    # ctx.compile(prog)
+    ctx.compile_cdn(prog)
 
     export(circuit, ctx.circuit)
     export(runner, ctx.runner)
