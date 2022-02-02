@@ -14,6 +14,7 @@ import (
 
 const ENV_PLAYER_ADDRESSES = "PLAYER_ADDRESSES"
 
+var MP_SPDZ = true
 var ADDRESSES []*net.TCPAddr
 
 /// load player addresses (only player0 required)
@@ -192,36 +193,6 @@ func main() {
 		conns[0] = conn0
 	}
 
-	// start MP-SPDZ
-	mpc, cmd := func() (*MPC, *exec.Cmd) {
-		// pass arguments to MP-SPDZ command
-		cmd := exec.Command(os.Args[1], os.Args[2:]...)
-
-		// get stdout
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			fmt.Println("failed to open stdout:", err)
-			panic(err)
-		}
-
-		// get stdin
-		stdin, err := cmd.StdinPipe()
-		if err != nil {
-			fmt.Println("failed to open in:", err)
-			panic(err)
-
-		}
-
-		// start MP-SPDZ instance
-		if err := cmd.Start(); err != nil {
-			fmt.Println("failed to start:", err)
-			panic(err)
-		}
-
-		// wrap in MPC abstraction
-		return NewMPC(stdout, stdin), cmd
-	}()
-
 	// setup OIP
 	oip := NewOIP(
 		SetupParams(),
@@ -233,24 +204,65 @@ func main() {
 	inputs := func() []uint64 {
 		if me == 1 {
 			inputs := make([]uint64, 100)
-			inputs[0] = 0x1
+			inputs[3] = 0x1
 			return inputs
 		}
 
 		return random(100)
 	}()
 
-	// run MPC circuit
-	log.Println("Start evaluation...")
-	output, err := run(me, inputs, mpc, oip)
-	if err != nil {
-		panic(err)
-	}
+	for reps := 0; reps < 1; reps++ {
+		fmt.Println("Repetion", reps)
 
-	// wait for MP-SPDZ to finish
-	if err := cmd.Wait(); err != nil {
-		panic(err)
+		// start MP-SPDZ
+		var mpc *MPC
+		var cmd *exec.Cmd
+		if MP_SPDZ {
+			mpc, cmd = func() (*MPC, *exec.Cmd) {
+				// pass arguments to MP-SPDZ command
+				cmd := exec.Command(os.Args[1], os.Args[2:]...)
+
+				// get stdout
+				stdout, err := cmd.StdoutPipe()
+				if err != nil {
+					fmt.Println("failed to open stdout:", err)
+					panic(err)
+				}
+
+				// get stdin
+				stdin, err := cmd.StdinPipe()
+				if err != nil {
+					fmt.Println("failed to open in:", err)
+					panic(err)
+
+				}
+
+				// start MP-SPDZ instance
+				if err := cmd.Start(); err != nil {
+					fmt.Println("failed to start:", err)
+					panic(err)
+				}
+
+				// wrap in MPC abstraction
+				return NewMPC(stdout, stdin), cmd
+			}()
+		}
+
+		// run MPC circuit
+		log.Println("Start evaluation...")
+		output, err := run(me, inputs, mpc, oip)
+		if err != nil {
+			panic(err)
+		}
+
+		if MP_SPDZ {
+			// wait for MP-SPDZ to finish
+			if err := cmd.Wait(); err != nil {
+				panic(err)
+			}
+		}
+
+		log.Println("Output:", output)
 	}
-	log.Println("Output:", output)
 
 }

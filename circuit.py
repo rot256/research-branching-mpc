@@ -173,13 +173,13 @@ class Ctx:
     def __init__(self, players, prime):
         self.prime = prime
         self.players = players
-        self.circuit = CIRCUIT_PREAMBLE # MPC circuit description
+        self.circuit = list(CIRCUIT_PREAMBLE) # MPC circuit description
         self.runner = []  # go program
         self.n = 0
 
     def append(self, name, elems, offset=0):
         for i, elem in enumerate(elems):
-            self.circuit.append('{name}[{i}] = {elem}'.format(
+            self.circ('{name}[{i}] = {elem}'.format(
                 name=name,
                 i=i+offset,
                 elem=elem
@@ -257,56 +257,45 @@ class Ctx:
     def compile_cdn(self, gates):
         self.prog('package main')
         self.prog('')
-        self.prog('func run(me int, inputs []FieldElem, oip *OIP) ([]uint64, error) {')
+        self.prog('func init() { MP_SPDZ = false }') # disable MP-SPDZ functionality
+        self.prog('')
+        self.prog('func run(me int, inputs []FieldElem, mpc *MPC, oip *OIP) ([]Share, error) {')
+        self.prog('    if mpc != nil { panic("MP-SPDZ Enabled") }')
         self.prog('    nxt_input := 0')
-        self.prog('    output := make([]FieldElem, 16)')
-        self.prog('    wires := make([]Share, 1 << 10)')
+        self.prog('    output := make([]FieldElem, 0, 16)')
+        self.prog('    wires := make([]Share, 0, 1 << 17)')
         self.prog('    cdn := NewCDN(oip)')
 
         for (w, g) in enumerate(gates):
             if isinstance(g, Input):
                 self.prog('    if me == {player} {{'.format(player=g.player))
-                self.prog('        wires[{num}] = inputs[nxt_input]'.format(num=w))
+                self.prog('        wires = append(wires, inputs[nxt_input])'.format(num=w))
+                self.prog('        nxt_input += 1')
+                self.prog('    } else { ')
+                self.prog('        wires = append(wires, 0)'.format(num=w))
                 self.prog('    }')
 
             elif isinstance(g, Output):
-                self.prog('    out{idx}, err := cdn.Reconstruct(wires[{num}])...)'.format(num=g.wire, idx=w))
-                self.prog('    if err != nil { return err }')
+                self.prog('    out{idx}, err := cdn.Reconstruct([]Share{{ wires[{num}] }})'.format(num=g.wire, idx=w))
+                self.prog('    if err != nil { return nil, err }')
                 self.prog('    output = append(output, out{idx}...)'.format(idx=w))
+                self.prog('    wires = append(wires, 0)'.format(num=w)) # the output gate yields 0
 
             elif isinstance(g, Mul):
-                assert False, 'Unimplemented'
+                # we only implemented adds / muls in disjunctions
+                raise ValueError('Unimplemented')
 
             elif isinstance(g, Add):
-                assert False, 'Unimplemented'
+                # we only implemented adds / muls in disjunctions
+                raise ValueError('Unimplemented')
 
             elif isinstance(g, Disjunction):
                 inputs = {}
 
+                # translate branch sub-circuits to position-dependent disjunction meta-circuit
                 g.translate(w)
 
                 self.prog('err := func() error {')
-
-                self.circ('')
-                self.circ('# pack selection wires')
-                self.pack('b', wires(g.selector))
-
-                # compute the gate programming (linear combination)
-                self.circ('')
-                self.circ('# compute gate programming')
-                self.circuit.append('g = sint.Array(size={dim})'.format(dim=g.branch_size))
-                for i in range(g.branch_size):
-                    select = ['b[%d]' % j for (j, (sel, prog)) in enumerate(zip(g.selector, g.progs)) if prog[i]]
-
-                    if len(select) == 0:
-                        self.circuit.append('g[{num}] = 0'.format(num=i))
-                    elif len(select) == len(g.selector):
-                        self.circuit.append('g[{num}] = 1'.format(num=i))
-                    else:
-                        self.circuit.append('g[{num}] = {sel}'.format(
-                            num=i,
-                            sel=' + '.join(select)
-                        ))
 
                 out_dim = len(g.disj_inputs) + g.branch_size
                 in_dim = g.branch_size * 2
@@ -317,42 +306,46 @@ class Ctx:
                     self.prog('    {' + ','.join(map(str, perm)) +'},')
                 self.prog('}')
 
-                # execute OIP protocol on random mask
-                self.additive_random('out', size=out_dim)       # export
-                self.additive_output('b', size=len(g.selector)) # export
-                self.prog('v := apply_mapping(mapping, out)')
-                self.prog('D, err := oip.Select(b, v)')
+                # export programming to runner
+                self.prog('programming := [][]bool{')
+                for perm in g.progs:
+                    self.prog('    {' + ','.join(['true' if p else 'false' for p in perm]) +'},')
+                self.prog('}')
+
+                # pack selectors
+                self.prog('selectors := []Share{' + ','.join(['wires[%d]' % i for i in g.selector]) + '}')
+
+                # pack inputs
+                self.prog('inputs := []Share{' + ','.join(['wires[%d]' % i for i in g.disj_inputs]) + '}')
+
+                # use cdn.Disjunction helper from CDN implemenation
+                self.prog('''   w, err := cdn.Disjunction(
+        []int{{{levels}}},   // branch evaluation levels
+        {mapping},      // mapping
+        {inputs},       // inputs to all branches
+        {sel},          // selectors
+        {gate_programs}, // gate programmings
+    )
+                '''.format(
+                    levels=','.join(map(str, g.levels)),
+                    mapping='mapping',
+                    inputs='inputs',
+                    sel='selectors',
+                    gate_programs='programming'
+                ))
                 self.prog('if err != nil { return err }')
+                self.prog('wires = append(wires, w...)')
 
-                # input back into the MPC
-                self.additive_input('D', size=in_dim)
-
-                #
-                self.circ('')
-                self.circ('# pack outputs to the disjunction')
-                self.circ('u = cint.Array(size={dim})'.format(dim=out_dim))
-                for i, w in enumerate(g.disj_inputs):
-                    self.circ('u[{num}] = (out[{num}] + {wire}).reveal()'.format(
-                        num=i,
-                        wire=wire(w)
-                    ))
+                # copy branch outputs back to wires slice
 
 
-                next_idx = len(g.disj_inputs)
-                for i in range(g.branch_size):
-                    self.circ('')
-                    self.circ('# gate number %d' % i)
-                    ws = (2*i, 2*i+1)
-                    ns = ('l', 'r')
-                    for n, w in zip(ns, ws):
-                        summation = ['(b[{num}] * u[{idx}])'.format(num=j, idx=perm[w]) for (j, perm) in enumerate(g.perms)]
-                        self.circ('{name} = {summation} - D[{idx}]'.format(
-                            summation=' + '.join(summation),
-                            name=n,
-                            idx=w
-                        ))
+                self.prog('return nil')
+                self.prog('}()')
 
+                # handle possible error in disjunction
+                self.prog('if err != nil { return nil, err }')
 
+        self.prog('return output, nil')
         self.prog('}')
 
 
@@ -401,7 +394,7 @@ class Ctx:
                 ))
 
             elif isinstance(g, Mul):
-                self.circuit.append(
+                self.circ(
                     '{out} = {left} * {right}'.format(
                         out=wire(w),
                         left=wire(g.l),
@@ -410,7 +403,7 @@ class Ctx:
                 )
 
             elif isinstance(g, Add):
-                self.circuit.append(
+                self.circ(
                     '{out} = {left} + {right}'.format(
                         out=wire(w),
                         left=wire(g.l),
@@ -419,7 +412,7 @@ class Ctx:
                 )
 
             elif isinstance(g, Universal):
-                self.circuit.append(
+                self.circ(
                     '{out} = universal({gate}, {left}, {right})'.format(
                         out=wire(w),
                         gate=g.g,
@@ -442,16 +435,16 @@ class Ctx:
                 # compute the gate programming (linear combination)
                 self.circ('')
                 self.circ('# compute gate programming')
-                self.circuit.append('g = sint.Array(size={dim})'.format(dim=g.branch_size))
+                self.circ('g = sint.Array(size={dim})'.format(dim=g.branch_size))
                 for i in range(g.branch_size):
                     select = ['b[%d]' % j for (j, (sel, prog)) in enumerate(zip(g.selector, g.progs)) if prog[i]]
 
                     if len(select) == 0:
-                        self.circuit.append('g[{num}] = 0'.format(num=i))
+                        self.circ('g[{num}] = 0'.format(num=i))
                     elif len(select) == len(g.selector):
-                        self.circuit.append('g[{num}] = 1'.format(num=i))
+                        self.circ('g[{num}] = 1'.format(num=i))
                     else:
-                        self.circuit.append('g[{num}] = {sel}'.format(
+                        self.circ('g[{num}] = {sel}'.format(
                             num=i,
                             sel=' + '.join(select)
                         ))
@@ -525,6 +518,7 @@ class Ctx:
 
 def export(name, ls):
     s = '\n'.join(ls)
+    print('Write: %s (%d lines, %d chars)' % (name, len(ls), len(s)))
     if name is None:
         print(s)
     else:
@@ -551,10 +545,6 @@ def split(prog):
                 disj = []
             out.append(gate)
     return out
-
-import random
-
-random.seed(0x3333) # reproducable results
 
 def comparison(start, a, b):
     assert len(a) == len(b)
@@ -596,7 +586,10 @@ def random_circuit(wires, start, blocks=cycle([1]), length=4096, leveled=False):
     return gates
 
 def random_disj(sel, wires, start, blocks=cycle([4096]), length=1<<15):
-    return Disjunction(sel, [random_circuit(wires, start, blocks=blocks, length=length) for _ in range(len(sel))])
+    return Disjunction(
+        sel,
+        [random_circuit(wires, start, blocks=blocks, length=length) for _ in range(len(sel))]
+    )
 
 def random_leveled(sel, wires, start, log_length=16):
     blocks = [1 << i for i in range(log_length+1)][::-1] # starts wide
@@ -607,16 +600,21 @@ def random_leveled(sel, wires, start, log_length=16):
 
 if __name__ == '__main__':
 
+    import os
     import sys
+    import yaml
+    import random
+
+    random.seed(0x3333) # reproducable results
 
     args = iter(sys.argv[1:])
+    path = sys.argv[1]
+    name = os.path.basename(path)
+    assert name.endswith('.yml')
+    name = name[:-len('.yml')]
 
-    print(sys.argv)
-    length, branches, parties = next(args).split('-')
-
-    length = int(length)
-    branches = int(branches)
-    parties = int(parties)
+    with open(sys.argv[1], 'r') as f:
+        config = yaml.safe_load(f)
 
     def opt():
         global args
@@ -624,15 +622,6 @@ if __name__ == '__main__':
             return next(args)
         except StopIteration:
             return None
-
-    circuit = opt()
-    runner = opt()
-
-    print('length:', length)
-    print('branches:', branches)
-    print('parties:', parties)
-    print('circuit:', circuit)
-    print('runner:', runner)
 
     '''
     prog = split([
@@ -649,6 +638,9 @@ if __name__ == '__main__':
     ])
     '''
 
+    mpc = config['mpc']
+    circuit = config['circuit']
+
     prog = [
         Input(0), #0
         Input(0), #1
@@ -656,16 +648,60 @@ if __name__ == '__main__':
         Input(1), #4
         Input(1), #5
         Input(1), #6
-    ] + [Input(1)] * branches
+    ]
 
-    sel = list(range(3, 3+branches))
+    if circuit['type'] == 'layered':
+        param = circuit['parameters']
+
+        #
+        inputs = list(range(len(prog)))
+
+        # wire indexes of branch selectors (unary representation)
+        selectors = list(range(len(prog), len(prog)+param['branches']))
+
+        # append selectors (player 1 selects the active branch in our benchmark for simplicity)
+        prog += [Input(1)] * param['branches']
+
+        # create a random layered disjunction
+        prog.append(
+            random_disj(
+                selectors,
+                wires=inputs,
+                start=len(prog),
+                blocks=cycle([param['per_layer']]),
+                length=param['length']
+            )
+        )
+
+        # output the last value in the branch
+        prog.append(Output(len(prog)))
+
+    else:
+        raise ValueError('Unknown circuit type')
+
     # prog.append(random_disj(sel, wires=list(range(len(prog))), start=len(prog), length=length))
-    prog.append(random_leveled(sel, wires=list(range(len(prog))), start=len(prog), log_length=16))
-    prog.append(Output(len(prog)))
+    # prog.append(random_leveled(sel, wires=list(range(len(prog))), start=len(prog), log_length=16))
 
-    ctx = Ctx(parties, prime=65537)
-    # ctx.compile(prog)
-    ctx.compile_cdn(prog)
+    ctx = Ctx(mpc['parties'], prime=65537)
 
-    export(circuit, ctx.circuit)
-    export(runner, ctx.runner)
+    if mpc['type'] == 'cdn':
+        # compile to CDN execution
+        ctx.compile_cdn(prog)
+
+        # it should yield the empty circuit
+        # (since CDN it is implemented in Go, not MP-SPDZ)
+        assert ctx.circuit == CIRCUIT_PREAMBLE, '\n'.join(ctx.circuit)
+
+        # export the runner
+        export('runner-%s.go' % name, ctx.runner)
+
+    else:
+        # compile generic MPC
+        ctx.compile(prog)
+
+        # export runner and MP-SPDZ circuit
+        export('runner-%s.go' % name, ctx.runner)
+        export(
+            os.path.join('MP-SPDZ/Programs/Source/', 'bmpc-%s.mpc' % name),
+            ctx.circuit
+        )

@@ -1,3 +1,6 @@
+import yaml
+import time
+
 from pwn import *
 
 ADDRESSES = [
@@ -27,77 +30,92 @@ def start_random(players, n):
         shell=True
     )
 
-import time
-
-
-players = int(sys.argv[1])
-branches = int(sys.argv[2])
-
-# generate #branches * #length circuit to simulate naive approach
-
-if sys.argv[3] == 'naive':
-    RAND = True
-elif sys.argv[3] == 'bmpc':
-    RAND = False
-
-# check if already build
+def start_cdn(binary, players, n):
+    return process(
+        './%s -N %s -p %s' % (binary, players, n),
+        env = {'PLAYER_ADDRESSES':'/tmp/players.txt'},
+        shell=True
+    )
 
 def follow(p):
     while 1:
         try:
-            print(p.recvline())
+            print(p.recvline().decode('utf-8').strip())
         except EOFError:
             break
     assert p.poll() == 0
 
-length = 1 << 15
+WAIT = 0.05
 
-print('Random circuit:', RAND)
-print('Players:', players)
-print('Branches:', branches)
-
-params = '%s-%s-%s' % (length, branches, players)
-rparams = '%s-%s' % (length, branches)
-
-if not RAND:
-
-    print('Generate circuit and runner')
-
-    follow(process([
-        'make',
-        'bmpc-%s' % params,
-        'MP-SPDZ/Programs/Schedules/bmpc-%s.sch' % params
-    ]))
-
-else:
-
-    follow(process([
-        'make',
-        'MP-SPDZ/Programs/Schedules/rmpc-%s.sch' % rparams,
-    ]))
+def main():
 
 
-print('Run benchmark')
+    path = sys.argv[1]
+    name = os.path.basename(path)
+    assert name.endswith('.yml')
+    name = name[:-len('.yml')]
 
-ses = []
+    with open(sys.argv[1], 'r') as f:
+        config = yaml.safe_load(f)
 
-if RAND:
-    for p in range(players):
-        print('Starting', p)
-        time.sleep(0.05)
-        ses.append(start_random(players, p))
+    repetitions = 1
+    if len(sys.argv) > 2:
+        repetitions = int(sys.argv[2])
 
-else:
-    for p in range(players):
-        print('Starting', p)
-        time.sleep(0.05)
-        ses.append(start_player(players, p, params))
 
-start = time.time()
+    # build prereqs for benchmark
 
-for p in ses:
-    follow(p)
+    mpc = config['mpc']
 
-end = time.time()
+    if mpc['type'] == 'cdn':
+        follow(process([
+            'make',
+            'bmpc-%s' % name,
+        ]))
+    else:
+        raise ValueError('Not impl')
 
-print('Time:', end - start)
+    times = []
+
+    for _ in range(repetitions):
+
+        # start players
+
+        ses = []
+
+        parties = mpc['parties']
+
+        if mpc['type'] == 'cdn':
+            for p in range(parties):
+                print('Starting', p)
+                time.sleep(WAIT)
+                ses.append(start_cdn(
+                    'bmpc-%s' % name,
+                    parties,
+                    p
+                ))
+        else:
+            raise ValueError('Not impl')
+
+        start = time.time()
+
+        # wait for all players to terminate
+
+        for p in ses:
+            follow(p)
+
+        end = time.time()
+
+        # save result to benchmark file
+        times.append(end - start)
+
+    with open('bench-%s.yml' % name, 'w') as f:
+        yaml.safe_dump({
+            'times': times
+        }, f)
+
+
+
+if __name__ == '__main__':
+    main()
+

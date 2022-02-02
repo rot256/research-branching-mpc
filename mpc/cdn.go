@@ -18,53 +18,27 @@ const (
 	OperationAddConst
 )
 
-type Gate struct {
-	op   int
-	src1 int    // index of source wire
-	src2 uint64 // index or constant
-}
-
 type CDN struct {
-	oip  *OIP
-	midx []int
-
-	mul_left  []Share // batched left multiplication inputs
-	mul_right []Share // batched right multiplication inputs
-
-	wires []Share // wire assignments
-}
-
-func (e *CDN) ScheduleMul(l Share, r Share) {
-	e.mul_left = append(e.mul_left, l)
-	e.mul_right = append(e.mul_right, r)
+	oip *OIP
 }
 
 func (e *CDN) Mul(l []Share, r []Share) ([]Share, error) {
 	return e.oip.Multiply(l, r)
 }
 
-func (e *CDN) ResolveMul() ([]Share, error) {
-	res, err := e.oip.Multiply(e.mul_left, e.mul_right)
-	e.mul_left = e.mul_left[:0]
-	e.mul_right = e.mul_right[:0]
-	return res, err
-}
-
 func NewCDN(oip *OIP) *CDN {
 	return &CDN{
-		oip:       oip,
-		mul_left:  make([]Share, 0, 1<<15),
-		mul_right: make([]Share, 0, 1<<15),
-		wires:     make([]Share, 0, 1<<16),
+		oip: oip,
 	}
 }
 
-func (e *CDN) Export(wires []int) []FieldElem {
-	values := make([]FieldElem, len(wires))
-	for i, j := range wires {
-		values[i] = e.wires[j]
+// Private input is provided by creating a zero sharing,
+// where the share of the player providing input is set to the secret value
+func (e *CDN) Input(v FieldElem, player int) Share {
+	if e.oip.me == player {
+		return v
 	}
-	return values
+	return 0
 }
 
 // Run a disjunction (mapping and gate program computed by external program)
@@ -76,14 +50,14 @@ func (e *CDN) Disjunction(
 	inputs []Share, // indexes of all inputs to the branch
 	sel []Share, // selectors for each branch (indicator variables)
 	gate_programs [][]bool, // gate programmings, i.e. gate_program[b][i] = True iff. the i'th gate in branch b is a multiplication
-) error {
+) ([]Share, error) {
 	branches := len(mapping)
 
-	if branches != len(gate_programs) || branches != len(sel) {
+	if branches != len(gate_programs) || branches != len(sel) || len(mapping[0])%2 != 0 {
 		log.Panicln("Number of branches does not match", len(mapping), len(sel), len(gate_programs))
 	}
 
-	branch_size := len(mapping[0])
+	branch_size := len(mapping[0]) / 2
 
 	// compute gate programming (1 iff the selected branch has a multiplication in that position)
 	// this can be done in parallel with the OIP
@@ -114,33 +88,31 @@ func (e *CDN) Disjunction(
 
 	D, err := e.oip.Select(sel, vec)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// fill u with magic to detect unitialized values
-	u := make([]FieldElem, out_dim)
-	if CDN_DEBUG {
-		for i := 0; i < len(u); i++ {
-			u[i] = UNINITIALIZED
-		}
+	// two for every gate: left and right inputs
+	if len(D) != 2*branch_size {
+		panic("Invalid dimensions")
 	}
+
+	//
+	w := make([]Share, 0, branch_size)
+	u := make([]FieldElem, 0, out_dim)
 
 	// fill start of u with masked inputs
 	m_inp, err := e.Reconstruct(add_vec(inputs, out[:in_dim]))
 	if err != nil {
-		return err
+		return nil, err
 	}
-	copy(u[:in_dim], m_inp)
+	u = append(u, m_inp...)
 
 	// returns the next selected masked input
-	nxt := in_dim
+	nxt := 0
 	next_masked_input := func(idx int) Share {
 		var sum FieldElem
 		for i := 0; i < branches; i++ {
 			ui := u[mapping[i][idx]]
-			if CDN_DEBUG && ui == UNINITIALIZED {
-				panic("Unitialized u referenced")
-			}
 			sum += mul(sel[i], ui)
 		}
 		sum = sub(reduce(sum), D[nxt])
@@ -166,6 +138,8 @@ func (e *CDN) Disjunction(
 
 		// check if gate is the last one in the level
 		if g >= levels[level] {
+			log.Println("Execute Level", level)
+
 			// execute all gates in level
 			gates := len(p)
 
@@ -176,7 +150,7 @@ func (e *CDN) Disjunction(
 			// FIRST LEVEL: compute (l*r)
 			lr, err := e.Mul(l, r)
 			if err != nil {
-				return err
+				return nil, err
 			}
 
 			// compute left = (l*r) || (l+r)
@@ -192,39 +166,51 @@ func (e *CDN) Disjunction(
 			// SECOND LEVEL: compute (l*r)*p and (l+r)*(1-p)
 			res, err := e.Mul(left, right)
 			if err != nil {
-				return err
+				return nil, err
 			}
 
 			// split mul. result into two seperate slices
 			l_mul_r_mul_p := res[:gates]
 			l_add_r_mul_1p := res[gates:]
 
-			// THIRD LEVEL: reconstruct((1-p)*(l+r) + p*(l*r))
-			w, err := e.Reconstruct(add_vec(l_mul_r_mul_p, l_add_r_mul_1p))
+			// THIRD LEVEL: mask and reconstruct((1-p)*(l+r) + p*(l*r) + out)
+			new_w := add_vec(l_mul_r_mul_p, l_add_r_mul_1p)
+			new_u, err := e.Reconstruct(add_vec(out[s:s+gates], new_w))
 			if err != nil {
-				return err
+				return nil, err
 			}
 
-			// write back to u
-			copy(u[s:s+gates], w)
+			// write back to u and w
+			w = append(w, new_w...)
+			u = append(u, new_u...)
 			s += gates
 
 			// advance to next level of the branch
 			level += 1
-			l = l[:]
-			r = r[:]
-			p = p[:]
+			l = l[:0]
+			r = r[:0]
+			p = p[:0]
 		}
 	}
 
+	// sanity check: every level was executed
 	if len(l) != 0 || level != len(levels) {
 		panic("Last level has not been executed")
 	}
+	if len(w) != branch_size {
+		panic("Insufficient outputs")
+	}
 
-	return nil
+	// copy output
+	return w, nil
 }
 
 func add_vec(src1, src2 []Share) []Share {
+	// sanity check
+	if len(src1) != len(src2) {
+		panic("Adding vectors of different length")
+	}
+
 	dst := make([]Share, len(src1))
 	for i := 0; i < len(src1); i++ {
 		dst[i] = add(src1[i], src2[i])
