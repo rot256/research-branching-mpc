@@ -47,8 +47,39 @@ def follow(p):
 
 WAIT = 0.05
 
-def main():
+class NetCapture:
+    def __init__(self):
+        # remove old capture
+        follow(process(['sudo', 'rm', '-f', '/tmp/bench.pcap']))
 
+        # start new capture
+        self.p = process(['sudo', 'tcpdump', '--interface', 'lo', '-w', '/tmp/bench.pcap'])
+        self.p.recvuntil('tcpdump: listening on lo')
+
+    def stop(self):
+        self.p.kill()
+
+        # upper bound
+        self.total = os.path.getsize('/tmp/bench.pcap')
+
+        return self.total
+
+        t = process(['tshark', '-nr', '/tmp/bench.pcap', '-T', 'fields', '-e', 'frame.len'])
+        # t = process(['tshark', '-r', '/tmp/bench.pcap', '-T', 'text', '-V'])
+
+        total = 0
+
+        while 1:
+            try:
+                cnt = int(t.recvline().decode('utf-8'))
+                total += cnt
+                print('total', total)
+            except EOFError:
+                break
+
+        return total
+
+def main():
 
     path = sys.argv[1]
     name = os.path.basename(path)
@@ -75,7 +106,9 @@ def main():
     else:
         raise ValueError('Not impl')
 
-    times = []
+    samples = []
+
+    started = time.time()
 
     for _ in range(repetitions):
 
@@ -83,7 +116,11 @@ def main():
 
         ses = []
 
+        processes = {}
+
         parties = mpc['parties']
+
+        net = NetCapture()
 
         if mpc['type'] == 'cdn':
             for p in range(parties):
@@ -106,14 +143,27 @@ def main():
 
         end = time.time()
 
-        # save result to benchmark file
-        times.append(end - start)
+        total = net.stop()
 
+        samples.append({
+            'time': end - start,
+            'comm': total
+        })
+
+
+    stopped = time.time()
+
+    # log the start/stop time, the samples (of course) and the input configuration
+    bench = {
+        'started': started,
+        'stopped': stopped,
+        'samples': samples,
+        'config': config
+    }
+
+    # get CPU info
     with open('bench-%s.yml' % name, 'w') as f:
-        yaml.safe_dump({
-            'times': times
-        }, f)
-
+        yaml.safe_dump(bench, f)
 
 
 if __name__ == '__main__':
