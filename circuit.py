@@ -391,7 +391,7 @@ class Ctx:
                 # translate branch sub-circuits to position-dependent disjunction meta-circuit
                 g.translate(w)
 
-                self.prog('err := func() error {')
+                self.prog('err = func() error {')
 
                 out_dim = len(g.disj_inputs) + g.branch_size
                 in_dim = g.branch_size * 2
