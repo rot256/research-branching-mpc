@@ -30,14 +30,24 @@ bench-%.yml: bmpc-% runner.py
 	echo $^
 	python3 runner.py $*.yml 20
 
-cdn-branches-plot.png: \
+cdn-branches-plot.png: plot.py \
 	bench-auto-cdn-l16-b2-p3.yml \
 	bench-auto-cdn-l16-b4-p3.yml \
 	bench-auto-cdn-l16-b8-p3.yml \
 	bench-auto-cdn-l16-b16-p3.yml \
 	bench-auto-cdn-l16-b32-p3.yml \
-	bench-auto-cdn-l16-b64-p3.yml
-	python3 plot.py $@ branches time,comm $^
+	bench-auto-cdn-l16-b64-p3.yml \
+	bench-auto-cdn-naive-l16-b2-p3.yml \
+	bench-auto-cdn-naive-l16-b4-p3.yml \
+	bench-auto-cdn-naive-l16-b8-p3.yml \
+	bench-auto-cdn-naive-l16-b16-p3.yml \
+	bench-auto-cdn-naive-l16-b32-p3.yml \
+	bench-auto-cdn-naive-l16-b64-p3.yml
+	python3 plot.py $@ \
+		branches \
+		time,comm \
+		"CDN Ours" bench-auto-cdn-l16-b2-p3.yml,bench-auto-cdn-l16-b4-p3.yml,bench-auto-cdn-l16-b8-p3.yml,bench-auto-cdn-l16-b16-p3.yml,bench-auto-cdn-l16-b32-p3.yml,bench-auto-cdn-l16-b64-p3.yml \
+		"CDN Naive" bench-auto-cdn-naive-l16-b2-p3.yml,bench-auto-cdn-naive-l16-b4-p3.yml,bench-auto-cdn-naive-l16-b8-p3.yml,bench-auto-cdn-naive-l16-b16-p3.yml,bench-auto-cdn-naive-l16-b32-p3.yml,bench-auto-cdn-naive-l16-b64-p3.yml
 
 .SECONDARY:
 
