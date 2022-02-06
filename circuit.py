@@ -262,32 +262,128 @@ class Ctx:
         self.prog('func run(me int, inputs []FieldElem, mpc *MPC, oip *OIP) ([]Share, error) {')
         self.prog('    if mpc != nil { panic("MP-SPDZ Enabled") }')
         self.prog('    nxt_input := 0')
+        self.prog('    var err error')
         self.prog('    output := make([]FieldElem, 0, 16)')
-        self.prog('    wires := make([]Share, 0, 1 << 17)')
+        self.prog('    wires := make([]Share, {size})'.format(size=len(gates)))
         self.prog('    cdn := NewCDN(oip)')
+
+        # we batch multiplications to improve efficiency
+
+        def resolve_mul(defered):
+
+            print('Flushing %d defered multiplications' % len(defered))
+
+            # resolve all multiplications
+            self.prog('   err = func() error {')
+
+            # convert to sorted list (better cache-locality)
+            dsts = sorted(defered)
+
+            ls = []
+            rs = []
+            ms = []
+
+            # convert to lists of indexes
+            for dst in dsts:
+                l, r = defered[dst]
+                ls.append(l)
+                rs.append(r)
+                ms.append(dst)
+
+            self.prog('   idx_l := []int{{ {left} }}'.format(left=','.join(map(str, ls))))
+            self.prog('   idx_r := []int{{ {right} }}'.format(right=','.join(map(str, rs))))
+            self.prog('   idx_m := []int{{ {mul} }}'.format(mul=','.join(map(str, ms))))
+
+            # pack wires
+            self.prog('   l := make([]Share, {size})'.format(size=len(ls)))
+            self.prog('   r := make([]Share, {size})'.format(size=len(ls)))
+            self.prog('   for i := 0; i < {size}; i++ {{'.format(size=len(ls)))
+            self.prog('       l[i] = wires[idx_l[i]]')
+            self.prog('       r[i] = wires[idx_r[i]]')
+            self.prog('   }')
+
+            # execute multiplications
+            self.prog('   m, err := cdn.Mul(l, r)')
+            self.prog('   if err != nil { return nil }')
+
+            # write back to each location
+            self.prog('   for i := 0; i < {size}; i++ {{'.format(size=len(ls)))
+            self.prog('       wires[idx_m[i]] = m[i]')
+            self.prog('   }')
+            self.prog('   return nil')
+
+            # call and check for error
+            self.prog('   }()')
+            self.prog('   if err != nil { return nil, err }')
+
+        def resolve_add(defered):
+            # convert to sorted list (better cache-locality)
+            dsts = sorted(defered)
+
+            ls = []
+            rs = []
+            ms = []
+
+            # convert to lists of indexes
+            for dst in dsts:
+                l, r = defered[dst]
+                ls.append(l)
+                rs.append(r)
+                ms.append(dst)
+
+            self.prog('func() {')
+            self.prog('   idx_l := []int{{ {left} }}'.format(left=','.join(map(str, ls))))
+            self.prog('   idx_r := []int{{ {right} }}'.format(right=','.join(map(str, rs))))
+            self.prog('   idx_m := []int{{ {mul} }}'.format(mul=','.join(map(str, ms))))
+            self.prog('   for i := 0; i < {size}; i++ {{'.format(size=len(ls)))
+            self.prog('       wires[idx_m[i]] = add(wires[idx_l[i]], wires[idx_r[i]])')
+            self.prog('   }')
+            self.prog('}()')
+
+        additions = {}
+        multiplications = {}
 
         for (w, g) in enumerate(gates):
             if isinstance(g, Input):
                 self.prog('    if me == {player} {{'.format(player=g.player))
-                self.prog('        wires = append(wires, inputs[nxt_input])'.format(num=w))
+                self.prog('        wires[{num}] = inputs[nxt_input]'.format(num=w))
                 self.prog('        nxt_input += 1')
                 self.prog('    } else { ')
-                self.prog('        wires = append(wires, 0)'.format(num=w))
+                self.prog('        wires[{num}] = 0'.format(num=w))
                 self.prog('    }')
 
             elif isinstance(g, Output):
                 self.prog('    out{idx}, err := cdn.Reconstruct([]Share{{ wires[{num}] }})'.format(num=g.wire, idx=w))
                 self.prog('    if err != nil { return nil, err }')
                 self.prog('    output = append(output, out{idx}...)'.format(idx=w))
-                self.prog('    wires = append(wires, 0)'.format(num=w)) # the output gate yields 0
 
             elif isinstance(g, Mul):
-                # we only implemented adds / muls in disjunctions
-                raise ValueError('Unimplemented')
+                if g.l in multiplications or g.r in multiplications:
+                    resolve_mul(multiplications)
+                    multiplications = {}
+
+                if g.l in additions or g.r in additions:
+                    resolve_add(additions)
+                    additions = {}
+
+                multiplications[w] = (g.l, g.r)
 
             elif isinstance(g, Add):
-                # we only implemented adds / muls in disjunctions
-                raise ValueError('Unimplemented')
+                # must resolve multiplications
+                if g.l in multiplications or g.r in multiplications:
+                    resolve_mul(multiplications)
+                    multiplications = {}
+
+                additions[w] = (g.l, g.r)
+
+                # compute addition
+                '''
+                self.prog('   wires[{num}] = add(wires[{left}], wires[{right}])'.format(
+                    num=w,
+                    left=g.l,
+                    right=g.r
+                ))
+                '''
 
             elif isinstance(g, Disjunction):
                 inputs = {}
@@ -334,16 +430,17 @@ class Ctx:
                     gate_programs='programming'
                 ))
                 self.prog('if err != nil { return err }')
-                self.prog('wires = append(wires, w...)')
 
                 # copy branch outputs back to wires slice
-
-
+                self.prog('copy(wires[{num}:], w)'.format(num=w))
                 self.prog('return nil')
                 self.prog('}()')
 
                 # handle possible error in disjunction
                 self.prog('if err != nil { return nil, err }')
+
+        if multiplications: resolve_mul(multiplications)
+        if additions: resolve_add(additions)
 
         self.prog('return output, nil')
         self.prog('}')
@@ -591,6 +688,15 @@ def random_disj(sel, wires, start, blocks=cycle([4096]), length=1<<15):
         [random_circuit(wires, start, blocks=blocks, length=length) for _ in range(len(sel))]
     )
 
+def random_naive_disj(sel, wires, start, blocks=cycle([4096]), length=1<<15):
+    branches = len(sel)
+    return random_circuit(
+        wires,
+        start,
+        blocks=map(lambda x: x * branches, blocks), # each branch can be executed in parallel
+        length=length*branches                      # the circuit is #branches times longer: every branch executed in parallel
+    )
+
 def random_leveled(sel, wires, start, log_length=16):
     blocks = [1 << i for i in range(log_length+1)][::-1] # starts wide
     length = (1 << (log_length+1)) - 1
@@ -650,6 +756,7 @@ if __name__ == '__main__':
         Input(1), #6
     ]
 
+
     if circuit['type'] == 'layered':
         param = circuit['parameters']
 
@@ -671,6 +778,29 @@ if __name__ == '__main__':
                 blocks=cycle([param['per_layer']]),
                 length=param['length']
             )
+        )
+
+        # output the last value in the branch
+        prog.append(Output(len(prog)))
+
+    elif circuit['type'] == 'layered-naive':
+        param = circuit['parameters']
+
+        inputs = list(range(len(prog)))
+
+        # wire indexes of branch selectors (unary representation)
+        selectors = list(range(len(prog), len(prog)+param['branches']))
+
+        # append selectors (player 1 selects the active branch in our benchmark for simplicity)
+        prog += [Input(1)] * param['branches']
+
+        # create an approximation of a naive layered disjunction (a very parallel circuit)
+        prog += random_naive_disj(
+            selectors,
+            wires=inputs,
+            start=len(prog),
+            blocks=cycle([param['per_layer']]),
+            length=param['length']
         )
 
         # output the last value in the branch

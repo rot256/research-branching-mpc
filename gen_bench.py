@@ -1,8 +1,9 @@
 import yaml
 
 
-def cdn(players, branches, log_length):
-    name = 'auto-cdn-l{length}-b{branches}-p{players}.yml'.format(
+def cdn(players, branches, log_length, naive=False):
+    name = 'auto-cdn{naive}l{length}-b{branches}-p{players}.yml'.format(
+        naive='-naive-' if naive else '',
         players=players,
         branches=branches,
         length=log_length
@@ -14,7 +15,7 @@ def cdn(players, branches, log_length):
                 'parties': players,
             },
             'circuit': {
-                'type': 'layered',
+                'type': 'layered-naive' if naive else 'layered',
                 'parameters': {
                     'per_layer': 4096,
                     'length': 1 << log_length,
@@ -25,5 +26,8 @@ def cdn(players, branches, log_length):
 
 for branches in range(1, 7):
     cdn(players = 3, branches=1 << branches, log_length=16)
+
+for branches in range(1, 7):
+    cdn(players = 3, branches=1 << branches, log_length=16, naive=True)
 
 
