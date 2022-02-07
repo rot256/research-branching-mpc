@@ -37,6 +37,20 @@ def start_cdn(binary, players, n):
         shell=True
     )
 
+def start_mascot_semi(binary, players, circuit, n):
+    cmd = 'cd MP-SPDZ && ../{binary} ./semi-party.x -N {players} -I -p {n} {circuit}'.format(
+        players=players,
+        n=n,
+        circuit=circuit,
+        binary=binary
+    )
+    print('Start', cmd)
+    return process(
+        cmd,
+        env = {'PLAYER_ADDRESSES':'/tmp/players.txt'},
+        shell=True
+    )
+
 def follow(p):
     while 1:
         try:
@@ -104,7 +118,11 @@ def main():
             'bmpc-%s' % name,
         ]))
     else:
-        raise ValueError('Not impl')
+        follow(process([
+            'make',
+            'bmpc-%s' % name,
+            'MP-SPDZ/Programs/Schedules/bmpc-%s.sch' % name
+        ]))
 
     samples = []
 
@@ -131,6 +149,17 @@ def main():
                     parties,
                     p
                 ))
+        elif mpc['type'] == 'mascot_semi':
+            for p in range(parties):
+                print('Starting', p)
+                time.sleep(WAIT)
+                ses.append(start_mascot_semi(
+                    binary='bmpc-%s' % name,
+                    circuit='bmpc-%s' % name,
+                    players=parties,
+                    n=p
+                ))
+
         else:
             raise ValueError('Not impl')
 

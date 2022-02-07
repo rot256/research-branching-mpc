@@ -457,13 +457,6 @@ class Ctx:
             for player in sorted(inputs.keys()):
                 length = 0
                 for (w, g) in inputs[player]: # length of input
-                    self.circ(
-                        '{out} = sint.get_input_from({player}, size={dim})'.format(
-                            out=wire(w),
-                            player=g.player,
-                            dim=g.dim
-                        )
-                    )
                     length += g.dim
 
                 # deliver single input size
@@ -472,15 +465,19 @@ class Ctx:
                 self.prog('    nxt += {length}'.format(length=length))
                 self.prog('}')
 
-        inputs = {}
-
-
         for (w, g) in enumerate(gates):
             if isinstance(g, Input):
-                try:
-                    inputs[g.player].append((w, g))
-                except KeyError:
-                    inputs[g.player] = [(w, g)]
+                self.circ(
+                    '{out} = sint.get_input_from({player}, size={dim})'.format(
+                        out=wire(w),
+                        player=g.player,
+                        dim=g.dim
+                    )
+                )
+                self.prog('if player == {player} {{'.format(player=g.player))
+                self.prog('    mpc.TryInput(inputs[nxt:nxt+{length}])'.format(length=g.dim))
+                self.prog('    nxt += {length}'.format(length=g.dim))
+                self.prog('}')
 
             elif isinstance(g, Output):
                 self.circ('output({wire}.reveal())'.format(
@@ -519,8 +516,6 @@ class Ctx:
                 )
 
             elif isinstance(g, Disjunction):
-                flush_inputs(inputs)
-                inputs = {}
 
                 g.translate(w)
                 self.prog('err := func() error {')
@@ -605,10 +600,7 @@ class Ctx:
                 self.prog('if err != nil { return nil, err }')
 
             else:
-                assert False
-
-        flush_inputs(inputs)
-        inputs = {}
+                raise ValueError('Not supported')
 
         self.prog('return output, nil')
         self.prog('}')
@@ -781,7 +773,7 @@ if __name__ == '__main__':
         )
 
         # output the last value in the branch
-        prog.append(Output(len(prog)))
+        prog.append(Output(len(prog) - 1))
 
     elif circuit['type'] == 'layered-naive':
         param = circuit['parameters']
@@ -804,7 +796,7 @@ if __name__ == '__main__':
         )
 
         # output the last value in the branch
-        prog.append(Output(len(prog)))
+        prog.append(Output(len(prog) - 1))
 
     else:
         raise ValueError('Unknown circuit type')
