@@ -26,11 +26,11 @@ clean:
 	rm -f bench-*.yml
 	rm -f auto-*.yml
 
-bench-%.yml: bmpc-% runner.py
-	echo $^
+# bench-%.yml: %.yml bmpc-% runner.py
+bench-%.yml:
 	python3 runner.py $*.yml 20
 
-cdn-branches-plot.png: plot.py \
+p3-cdn-branches-plot.png: plot.py \
 	bench-auto-cdn-l16-b2-p3.yml \
 	bench-auto-cdn-l16-b4-p3.yml \
 	bench-auto-cdn-l16-b8-p3.yml \
@@ -44,12 +44,13 @@ cdn-branches-plot.png: plot.py \
 	bench-auto-cdn-naive-l16-b32-p3.yml \
 	bench-auto-cdn-naive-l16-b64-p3.yml
 	python3 plot.py $@ \
+		"Branching MPC with Semi-Honest CDN" \
 		branches \
 		time,comm \
-		"CDN Ours" bench-auto-cdn-l16-b2-p3.yml,bench-auto-cdn-l16-b4-p3.yml,bench-auto-cdn-l16-b8-p3.yml,bench-auto-cdn-l16-b16-p3.yml,bench-auto-cdn-l16-b32-p3.yml,bench-auto-cdn-l16-b64-p3.yml \
-		"CDN Naive" bench-auto-cdn-naive-l16-b2-p3.yml,bench-auto-cdn-naive-l16-b4-p3.yml,bench-auto-cdn-naive-l16-b8-p3.yml,bench-auto-cdn-naive-l16-b16-p3.yml,bench-auto-cdn-naive-l16-b32-p3.yml,bench-auto-cdn-naive-l16-b64-p3.yml
+		"CDN Branching" bench-auto-cdn-l16-b2-p3.yml,bench-auto-cdn-l16-b4-p3.yml,bench-auto-cdn-l16-b8-p3.yml,bench-auto-cdn-l16-b16-p3.yml,bench-auto-cdn-l16-b32-p3.yml,bench-auto-cdn-l16-b64-p3.yml \
+		"CDN Parallel" bench-auto-cdn-naive-l16-b2-p3.yml,bench-auto-cdn-naive-l16-b4-p3.yml,bench-auto-cdn-naive-l16-b8-p3.yml,bench-auto-cdn-naive-l16-b16-p3.yml,bench-auto-cdn-naive-l16-b32-p3.yml,bench-auto-cdn-naive-l16-b64-p3.yml
 
-semi-mascot-branches-plot.png: plot.py \
+p3-semi-mascot-branches-plot.png: plot.py \
 	bench-auto-mascot_semi-l16-b2-p3.yml \
 	bench-auto-mascot_semi-l16-b4-p3.yml \
 	bench-auto-mascot_semi-l16-b8-p3.yml \
@@ -63,11 +64,14 @@ semi-mascot-branches-plot.png: plot.py \
 	bench-auto-mascot_semi-naive-l16-b32-p3.yml \
 	bench-auto-mascot_semi-naive-l16-b64-p3.yml
 	python3 plot.py $@ \
+		"Branching MPC with Semi-Honest MASCOT" \
 		branches \
 		time,comm \
-		"Semi-MASCOT Ours" bench-auto-mascot_semi-l16-b2-p3.yml,bench-auto-mascot_semi-l16-b4-p3.yml,bench-auto-mascot_semi-l16-b8-p3.yml,bench-auto-mascot_semi-l16-b16-p3.yml,bench-auto-mascot_semi-l16-b32-p3.yml,bench-auto-mascot_semi-l16-b64-p3.yml \
-		"Semi-MASCOT Naive" bench-auto-mascot_semi-naive-l16-b2-p3.yml,bench-auto-mascot_semi-naive-l16-b4-p3.yml,bench-auto-mascot_semi-naive-l16-b8-p3.yml,bench-auto-mascot_semi-naive-l16-b16-p3.yml,bench-auto-mascot_semi-naive-l16-b32-p3.yml,bench-auto-mascot_semi-naive-l16-b64-p3.yml
+		"Semi-MASCOT Branching" bench-auto-mascot_semi-l16-b2-p3.yml,bench-auto-mascot_semi-l16-b4-p3.yml,bench-auto-mascot_semi-l16-b8-p3.yml,bench-auto-mascot_semi-l16-b16-p3.yml,bench-auto-mascot_semi-l16-b32-p3.yml,bench-auto-mascot_semi-l16-b64-p3.yml \
+		"Semi-MASCOT Parallel" bench-auto-mascot_semi-naive-l16-b2-p3.yml,bench-auto-mascot_semi-naive-l16-b4-p3.yml,bench-auto-mascot_semi-naive-l16-b8-p3.yml,bench-auto-mascot_semi-naive-l16-b16-p3.yml,bench-auto-mascot_semi-naive-l16-b32-p3.yml,bench-auto-mascot_semi-naive-l16-b64-p3.yml
+
+plots: p3-semi-mascot-branches-plot.png p3-cdn-branches-plot.png
 
 .SECONDARY:
 
-.PHONY: clean
+.PHONY: clean plots

@@ -26,13 +26,14 @@ SMALL_SIZE = 12
 MEDIUM_SIZE = 14
 BIGGER_SIZE = 16
 
-style_time = iter(['#48BF92', '#4E5BAD'])
-style_comm = iter(['#f4b757', '#f13d36'])
+style_time = iter(['#48BF92', '#f4b757'])
+style_comm = iter(['#4E5BAD', '#f13d36'])
 
 if __name__ == '__main__':
 
     arg = iter(sys.argv[1:])
     out = next(arg)
+    title = next(arg)
 
     print('Generating:', out)
 
@@ -45,6 +46,8 @@ if __name__ == '__main__':
 
     import matplotlib.pyplot as plt
     import matplotlib
+
+    plt.ticklabel_format(style='plain')
 
     fig = plt.figure()
     fig.set_size_inches(10, 6)
@@ -95,7 +98,7 @@ if __name__ == '__main__':
                 if name == 'time':
                     ys.append(int(avg_time(b) * 1000))
                 elif name == 'comm':
-                    ys.append(int(avg_comm(b) / 1000))
+                    ys.append(int(avg_comm(b) / 1_000_000))
 
             axx.yaxis.set_tick_params(labelsize=MEDIUM_SIZE)
 
@@ -106,8 +109,8 @@ if __name__ == '__main__':
                 axx.set_ylim(ymin=0, ymax=int(1.05 * max(ys)))
             elif name == 'comm':
                 color = next(style_comm)
-                a, = axx.plot(xs, ys, ':', label='Comm %s' % label, color=color, alpha=0.7, marker='o')
-                axx.set_ylabel('Total Communication (KB)', fontsize=BIGGER_SIZE)
+                a, = axx.plot(xs, ys, ':', label='Comm: %s' % label, color=color, alpha=0.7, marker='o')
+                axx.set_ylabel('Total Communication (MB)', fontsize=BIGGER_SIZE)
                 axx.set_ylim(ymin=0, ymax=int(1.05 * max(ys)))
             else:
                 ValueError('Not Supported')
@@ -124,13 +127,13 @@ if __name__ == '__main__':
         ax.set_xlabel('Number of parties', fontsize=BIGGER_SIZE)
 
     for axx in axies:
+        axx.get_yaxis().set_major_formatter(
+            matplotlib.ticker.FuncFormatter(lambda x, p: format(int(x), ',')))
         axx.margins()
 
     ax.legend(handles=plts, loc='lower right')
 
-    if x_axis == 'parties':
-        plt.title()
-
+    plt.title(title)
     plt.tight_layout()
     plt.savefig(out, transparent=True) #), dpi=200)
 

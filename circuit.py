@@ -524,23 +524,6 @@ class Ctx:
                 self.circ('# pack selection wires')
                 self.pack('b', wires(g.selector))
 
-                # compute the gate programming (linear combination)
-                self.circ('')
-                self.circ('# compute gate programming')
-                self.circ('g = sint.Array(size={dim})'.format(dim=g.branch_size))
-                for i in range(g.branch_size):
-                    select = ['b[%d]' % j for (j, (sel, prog)) in enumerate(zip(g.selector, g.progs)) if prog[i]]
-
-                    if len(select) == 0:
-                        self.circ('g[{num}] = 0'.format(num=i))
-                    elif len(select) == len(g.selector):
-                        self.circ('g[{num}] = 1'.format(num=i))
-                    else:
-                        self.circ('g[{num}] = {sel}'.format(
-                            num=i,
-                            sel=' + '.join(select)
-                        ))
-
                 out_dim = len(g.disj_inputs) + g.branch_size
                 in_dim = g.branch_size * 2
 
@@ -575,6 +558,20 @@ class Ctx:
                 for i in range(g.branch_size):
                     self.circ('')
                     self.circ('# gate number %d' % i)
+
+                    # compute the gate programming (linear combination)
+                    select = ['b[%d]' % j for (j, (sel, prog)) in enumerate(zip(g.selector, g.progs)) if prog[i]]
+                    if len(select) == 0:
+                        self.circ('g = 0')
+                    elif len(select) == len(g.selector):
+                        self.circ('g = 1')
+                    else:
+                        self.circ('g = {sel}'.format(
+                            num=i,
+                            sel=' + '.join(select)
+                        ))
+
+                    # execute gate
                     ws = (2*i, 2*i+1)
                     ns = ('l', 'r')
                     for n, w in zip(ns, ws):
@@ -585,10 +582,12 @@ class Ctx:
                             idx=w
                         ))
 
-                    self.circ('{wire} = (1 - g[{num}]) * (l + r) + g[{num}] * (l * r)'.format(
+                    self.circ('{wire} = (1 - g) * (l + r) + g * (l * r)'.format(
                         wire=g.gate_wires[i],
                         num=i
                     ))
+
+                    # reconstruct masked result
                     self.circ('u[{next_idx}] = ({wire} + out[{next_idx}]).reveal()'.format(
                         wire=g.gate_wires[i],
                         next_idx=next_idx

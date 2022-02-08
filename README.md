@@ -28,7 +28,8 @@ For automatic benchmarking (as orchestrated by `runner.py`), we require the foll
 - [tcpdump]() used to calculate the amount of network traffic.
 - [Traffic Control (tc)]() used to simulate different network conditions (i.e. latency).
 
-## Plotting / Dataanalysis
+
+## Plotting / Data analysis
 
 - [matplotlib]()
 
@@ -36,10 +37,31 @@ For automatic benchmarking (as orchestrated by `runner.py`), we require the foll
 
 How to reproduce benchmarks.
 
+## Simulating network delay
+
 ```
 sudo tc qdisc add dev lo root handle 1:0 netem delay 100msec
 
 sudo tc qdisc del dev lo root
+```
+
+## About memory consumption
+
+Because of the MP-SPDZ circuit compiler consuming massive amount of memory (and time -- it dominates the running time of the benchmark suite),
+preparing the benchmarks requires ~ 100GB of RAM if you do not have this available consider temporally allocating a large swap, e.g.
+
+```
+sudo fallocate -l 64G tmp-swap
+sudo chmod 0600 tmp-swap
+sudo mkswap tmp-swap
+sudo swapon tmp-swap
+```
+
+This should not affect the speed of the benchmark: the actual execution consumes much much less memory than the compiler. Then after benchmarking:
+
+```
+sudo swapon tmp-swap
+sudo rm tmp-swap
 ```
 
 # Plotting
