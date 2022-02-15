@@ -1,21 +1,15 @@
+# About
+
 # Results
 
-![](0ms/p3-cdn-branches-plot.png)
-![](0ms/p3-semi-mascot-branches-plot.png)
+## 0ms Latency (Localhost)
 
-# Resources
+<p float="left">
+  <img src="0ms/p3-cdn-branches-plot.png" width="49%" />
+  <img src="0ms/p3-semi-mascot-branches-plot.png" width="49%" />
+</p>
 
-## Code
-
-- [Awesome MPC](https://github.com/rdragos/awesome-mpc/blob/master/readme.md)
-- [Lattigo](https://github.com/ldsec/lattigo)
-- [MP-SPDZ](https://github.com/data61/MP-SPDZ)
-
-## Papers
-
-- [Compressible FHE with Applications to PIR](https://eprint.iacr.org/2019/733)
-
-# Tools
+# Dependencies
 
 ## Building / Running
 
@@ -33,12 +27,11 @@ For automatic benchmarking (as orchestrated by `runner.py`), we require the foll
 - [tcpdump]() used to calculate the amount of network traffic.
 - [Traffic Control (tc)]() used to simulate different network conditions (i.e. latency).
 
-
 ## Plotting / Data analysis
 
 - [matplotlib]()
 
-# Instructions
+# Reproducing The Results
 
 How to reproduce benchmarks.
 
@@ -69,7 +62,25 @@ sudo swapon tmp-swap
 sudo rm tmp-swap
 ```
 
-# Plotting
+## Producing the plots
 
-We use a number of scripts to compile the `.yaml` benchmark results into graphs.
+To compile all benchmarks, run all benchmarks and create all plots of the final results. Simply run:
 
+```
+make plots
+```
+
+# Resources
+
+Additional resources:
+
+## Software
+
+- [Awesome MPC](https://github.com/rdragos/awesome-mpc/blob/master/readme.md)
+- [Lattigo](https://github.com/ldsec/lattigo)
+- [MP-SPDZ](https://github.com/data61/MP-SPDZ)
+
+## Papers
+
+- [CDN](https://eprint.iacr.org/2000/055)
+- [MASCOT](https://eprint.iacr.org/2016/505)
