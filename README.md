@@ -4,12 +4,17 @@
 
 ## 0ms Latency (Localhost)
 
-<p float="left">
-  <img src="0ms/p3-cdn-branches-plot.png" width="49%" />
-  <img src="0ms/p3-semi-mascot-branches-plot.png" width="49%" />
+<p align="center">
+<img src="0ms/p3-cdn-branches-plot.png" width=80%" />
 </p>
 
+<p align="center">
+<img src="0ms/p3-semi-mascot-branches-plot.png" width="80%" />
+</p>
+
+<p align="center">
 <img src="0ms/parties-plot.png" width="80%" />
+</p>
 
 # Dependencies
 
