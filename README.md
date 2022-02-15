@@ -9,6 +9,8 @@
   <img src="0ms/p3-semi-mascot-branches-plot.png" width="49%" />
 </p>
 
+<img src="0ms/parties-plot.png" width="80%" />
+
 # Dependencies
 
 ## Building / Running
