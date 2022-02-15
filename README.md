@@ -1,3 +1,8 @@
+# Results
+
+![](0ms/p3-cdn-branches-plot.png)
+![](0ms/p3-semi-mascot-branches-plot.png)
+
 # Resources
 
 ## Code
