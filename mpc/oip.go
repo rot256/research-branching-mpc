@@ -186,6 +186,8 @@ func (o *OIP) Setup0() error {
 
 // setup OIP: run distributed key generation
 func (o *OIP) Setup() error {
+	o.Log("Running setup")
+
 	// expand CRS
 	crs, err := utils.NewKeyedPRNG(CRS)
 	if err != nil {
@@ -203,20 +205,23 @@ func (o *OIP) Setup() error {
 
 	// run protocol
 	if o.IsP0() {
+        o.Log("Setup as aggregator")
 		if err := o.Setup0(); err != nil {
-			return nil
+			return err
 		}
 	} else {
+        o.Log("Setup as regular player")
 		if err := o.SetupI(); err != nil {
-			return nil
+			return err
 		}
 	}
 
 	// create encryptor pool
+    o.Log("Setting up encryptors")
 	o.encryptor =
 		sync.Pool{
 			New: func() interface{} {
-				return bfv.NewEncryptor(o.params, o.pk)
+                return bfv.NewEncryptor(o.params, o.pk)
 			},
 		}
 
@@ -313,17 +318,21 @@ func (o *OIP) putEncryptor(e bfv.Encryptor) {
 
 func (o *OIP) Multiply(left []FieldElem, right []FieldElem) ([]FieldElem, error) {
 	if len(left) != len(right) {
-		log.Panicln("Left and right does not match")
+		log.Panicln("Left and right dimension does not match")
 	}
+
+    o.Log("CDN Batched Multiplication:", len(left), "elements")
 
 	// check if one-time key generation setup required
 
 	if o.pk == nil {
-		o.Log("Running setup")
 		if err := o.Setup(); err != nil {
+            o.Log("Setup failed:", err)
 			return nil, err
 		}
-	}
+    } else {
+        o.Log("Use previous setup")
+    }
 
 	// calculate number of blocks
 
@@ -603,11 +612,13 @@ func (o *OIP) Select(sel []FieldElem, branches [][]FieldElem) ([]FieldElem, erro
 
 	// check if one-time key generation setup required
 	if o.pk == nil {
-		o.Log("Running setup")
 		if err := o.Setup(); err != nil {
+            o.Log("Setup failed:", err)
 			return nil, err
 		}
-	}
+	} else {
+        o.Log("Use previous setup")
+    }
 
 	// maximum length of any vector in v
 	max_len := 0

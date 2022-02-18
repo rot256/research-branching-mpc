@@ -8,14 +8,17 @@ clean:
 	rm -f MP-SPDZ/Programs/Schedules/bmpc-*.sch
 	rm -f MP-SPDZ/Programs/Schedules/rmpc-*.sch
 	rm -f bench-*.yml
+	rm -f *.png
 
 rebench:
 	rm -f bench-*.yml
 
-MP-SPDZ/Programs/Source/bmpc-%.mpc runner-%.go: circuit.py
+# MP-SPDZ/Programs/Source/bmpc-%.mpc runner-%.go: circuit.py
+MP-SPDZ/Programs/Source/bmpc-%.mpc runner-%.go:
 	python3 ./circuit.py $*.yml # compile from yml description
 
-bmpc-%: runner-%.go
+# bmpc-%: runner-%.go
+bmpc-%:
 	cp runner-$*.go mpc/runner.go
 	cd mpc && go build
 	cp mpc/bmpc bmpc-$*
@@ -33,6 +36,10 @@ MP-SPDZ/Programs/Schedules/rmpc-%.sch: MP-SPDZ/Programs/Source/rmpc-%.mpc
 # bench-%.yml: %.yml bmpc-% runner.py
 bench-%.yml:
 	python3 runner.py $*.yml 20
+
+# auto-generate required benchmark descriptions
+auto-%.yml:
+	python3 gen_bench.py
 
 p3-cdn-branches-plot.png: plot.py \
 	bench-auto-cdn-l16-b2-p3.yml \
@@ -90,12 +97,11 @@ parties-plot.png: plot.py \
 	bench-auto-mascot_semi-l16-b16-p7.yml \
 	bench-auto-mascot_semi-l16-b16-p8.yml
 	python3 plot.py $@ \
-		"Complexity of Branching MPC (Number of Parties)" \
+		"Branching MPC With Different Num. of Parties (16 Branches of 2^16 Gates)" \
 		parties \
 		time,comm \
 		"Branching MPC (CDN)" bench-auto-cdn-l16-b16-p2.yml,bench-auto-cdn-l16-b16-p3.yml,bench-auto-cdn-l16-b16-p4.yml,bench-auto-cdn-l16-b16-p5.yml,bench-auto-cdn-l16-b16-p6.yml,bench-auto-cdn-l16-b16-p7.yml,bench-auto-cdn-l16-b16-p8.yml \
 		"Branching MPC (MASCOT)" bench-auto-mascot_semi-l16-b16-p2.yml,bench-auto-mascot_semi-l16-b16-p3.yml,bench-auto-mascot_semi-l16-b16-p4.yml,bench-auto-mascot_semi-l16-b16-p5.yml,bench-auto-mascot_semi-l16-b16-p6.yml,bench-auto-mascot_semi-l16-b16-p7.yml,bench-auto-mascot_semi-l16-b16-p8.yml
-
 
 .SECONDARY:
 

@@ -131,9 +131,9 @@ if __name__ == '__main__':
             matplotlib.ticker.FuncFormatter(lambda x, p: format(int(x), ',')))
         axx.margins()
 
-    ax.legend(handles=plts, loc='lower right')
+    ax.legend(handles=plts, loc='upper left')
 
-    plt.title(title)
+    plt.title(title, fontsize=BIGGER_SIZE)
     plt.tight_layout()
     plt.savefig(out, transparent=True) #), dpi=200)
 

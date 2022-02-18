@@ -45,7 +45,6 @@ func init() {
 			log.Fatal(err)
 		}
 		ADDRESSES = append(ADDRESSES, addr)
-		fmt.Println("Peer address:", addr)
 	}
 }
 
@@ -200,6 +199,8 @@ func main() {
 		conns,
 	)
 
+    oip.log = true
+
 	// load inputs for party
 	inputs := func() []uint64 {
 		if me == 1 {
@@ -211,13 +212,14 @@ func main() {
 		return random(100)
 	}()
 
+	// we can execute multiple reps with the same setup
 	for reps := 0; reps < 1; reps++ {
-		fmt.Println("Repetion", reps)
 
 		// start MP-SPDZ
 		var mpc *MPC
 		var cmd *exec.Cmd
 		if MP_SPDZ {
+            log.Println("Wrapping MP-SPDZ")
 			mpc, cmd = func() (*MPC, *exec.Cmd) {
 				// pass arguments to MP-SPDZ command
 				cmd := exec.Command(os.Args[1], os.Args[2:]...)
@@ -256,6 +258,7 @@ func main() {
 		}
 
 		if MP_SPDZ {
+            log.Println("Waiting for MP-SPDZ to finish")
 			// wait for MP-SPDZ to finish
 			if err := cmd.Wait(); err != nil {
 				panic(err)

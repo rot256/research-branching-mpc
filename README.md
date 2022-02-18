@@ -2,7 +2,8 @@
 
 This is a proof-of-concept implementation of the semi-honest version of the "branching MPC" compiler on-top of semi-honest MASCOT (or any other MPC over an arbitrary prime field provided by MP-SPDZ) and CDN respectively for the Eurocrypt 2022 submission "Communication Efficient Secure Multiparty Computation for Conditional Branches".
 CDN is implemented by instantiating the linearly homomorphic encryption using ring LWE.
-The implementation is written in a combination of C++ (MP-SPDZ), Go and Python (used for non-performance critical parts).
+The implementation is written in a combination of C++ (MP-SPDZ), Go and Python (used for performance non-critical parts).
+A copy of MP-SPDZ is included in this directory to ensure the results can be reproduced in future, should the interface change upstream.
 
 Need help comparing your technique with ours? Reach out!
 
@@ -43,7 +44,7 @@ See
 - [pyyaml]() used to parse test descriptions and serialize benchmark results.
 - [MP-SPDZ]() for implementations of generic MPC (not used for CDN).
 - [Lattigo](https://github.com/ldsec/lattigo) used for implementing the ring LWE components.
-- [Go (1.17 or later)]()
+- [Go (tested on 1.15 or later)]()
 
 ## Benchmarking
 
@@ -56,6 +57,8 @@ For automatic benchmarking (as orchestrated by `runner.py`), we require the foll
 ## Plotting
 
 - [matplotlib](https://matplotlib.org/)
+
+In this repository you will also find a Dockerfile which sets up the environment required for benchmarking.
 
 # Reproducing The Results
 

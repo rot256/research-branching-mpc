@@ -1,5 +1,9 @@
 import yaml
 
+'''
+Automatically generates benchmark descriptions.
+'''
+
 def circuit(log_length, branches, per_layer=4096, naive=False):
     return {
         'type': 'layered-naive' if naive else 'layered',
@@ -47,3 +51,7 @@ for branches in range(1, 7):
     cdn(players = 3, branches=1 << branches, log_length=16, naive=True)
     mascot_semi(players = 3, branches=1 << branches, log_length=16)
     mascot_semi(players = 3, branches=1 << branches, log_length=16, naive=True)
+
+for players in range(2, 9):
+    cdn(players = players, branches=16, log_length=16)
+    mascot_semi(players = players, branches=16, log_length=16)
