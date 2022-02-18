@@ -1,6 +1,24 @@
 # About
 
+This is a proof-of-concept implementation of the semi-honest version of the "branching MPC" compiler on-top of semi-honest MASCOT (or any other MPC over an arbitrary prime field provided by MP-SPDZ) and CDN respectively for the Eurocrypt 2022 submission "Communication Efficient Secure Multiparty Computation for Conditional Branches".
+CDN is implemented by instantiating the linearly homomorphic encryption using ring LWE.
+The implementation is written in a combination of C++ (MP-SPDZ), Go and Python (used for non-performance critical parts).
+
+Need help comparing your technique with ours? Reach out!
+
+# Warning
+
+Please **DO NOT** use this code in production systems.
+
+The code is provided solely for reproducibility and comparisons in future works.
+
 # Results
+
+The benchmarks were produced on a laptop with a `Intel i7-11800H` CPU and `64 GB` of RAM.
+See
+[/proc/meminfo](https://gist.github.com/rot256/0cafde6c8c99c7ead891a0b1fe0c952d),
+[dmidecode --type 17](https://gist.github.com/rot256/8d58f3134a504a602ef2d0bba8436fc5),
+[/proc/cpuinfo](https://gist.github.com/rot256/205eefc44178a4c751b95d75e4ab2091) for full details.
 
 ## 0ms Latency (Localhost)
 
@@ -22,9 +40,10 @@
 
 - [make]()
 - [python3]() used to compile branching circuits into executable descriptions.
-- [pyyaml]() used to parse test descriptions.
+- [pyyaml]() used to parse test descriptions and serialize benchmark results.
 - [MP-SPDZ]() for implementations of generic MPC (not used for CDN).
-- [Go (1.17 or later)]() implements OIP, the CDN MPC and wraps/interacts with MP-SPDZ.
+- [Lattigo](https://github.com/ldsec/lattigo) used for implementing the ring LWE components.
+- [Go (1.17 or later)]()
 
 ## Benchmarking
 
@@ -34,15 +53,23 @@ For automatic benchmarking (as orchestrated by `runner.py`), we require the foll
 - [tcpdump]() used to calculate the amount of network traffic.
 - [Traffic Control (tc)]() used to simulate different network conditions (i.e. latency).
 
-## Plotting / Data analysis
+## Plotting
 
-- [matplotlib]()
+- [matplotlib](https://matplotlib.org/)
 
 # Reproducing The Results
 
-How to reproduce benchmarks.
+To compile all benchmarks, run all benchmarks (on the local machine) and create all plots for the final results (found in the paper).
+
+Simply run:
+
+```
+make plots
+```
 
 ## Simulating network delay
+
+Different network delays are simulated by using traffic control to introduce latency over localhost. e.g. for an estimate for WAN with 100ms of latency (200 ms round-trip)
 
 ```
 sudo tc qdisc add dev lo root handle 1:0 netem delay 100msec
@@ -65,21 +92,13 @@ sudo swapon tmp-swap
 This should not affect the speed of the benchmark: the actual execution consumes much much less memory than the compiler. Then after benchmarking:
 
 ```
-sudo swapon tmp-swap
+sudo swapoff tmp-swap
 sudo rm tmp-swap
-```
-
-## Producing the plots
-
-To compile all benchmarks, run all benchmarks and create all plots of the final results. Simply run:
-
-```
-make plots
 ```
 
 # Resources
 
-Additional resources:
+Additional relevant resources.
 
 ## Software
 
@@ -91,3 +110,4 @@ Additional resources:
 
 - [CDN](https://eprint.iacr.org/2000/055)
 - [MASCOT](https://eprint.iacr.org/2016/505)
+- [MOTIF](https://eprint.iacr.org/2020/1175.pdf)
