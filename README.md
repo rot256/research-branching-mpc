@@ -14,56 +14,6 @@ Please **DO NOT** use this code in production systems.
 
 The code is provided solely for reproducibility and comparisons in future works.
 
-# Results
-
-The benchmarks were produced on a laptop with a `Intel i7-11800H` CPU and `64 GB` of RAM.
-See
-[/proc/meminfo](https://gist.github.com/rot256/0cafde6c8c99c7ead891a0b1fe0c952d),
-[dmidecode --type 17](https://gist.github.com/rot256/8d58f3134a504a602ef2d0bba8436fc5),
-[/proc/cpuinfo](https://gist.github.com/rot256/205eefc44178a4c751b95d75e4ab2091) for full details.
-
-## 0ms Latency (Localhost)
-
-<p align="center">
-<img src="0ms/p3-cdn-branches-plot.png" width=80%" />
-</p>
-
-<p align="center">
-<img src="0ms/p3-semi-mascot-branches-plot.png" width="80%" />
-</p>
-
-<p align="center">
-<img src="0ms/parties-plot.png" width="80%" />
-</p>
-
-## 10ms Latency (Simulated LAN)
-
-<p align="center">
-<img src="10ms/p3-cdn-branches-plot.png" width=80%" />
-</p>
-
-<p align="center">
-<img src="10ms/p3-semi-mascot-branches-plot.png" width="80%" />
-</p>
-
-<p align="center">
-<img src="10ms/parties-plot.png" width="80%" />
-</p>
-
-## 100ms Latency (Simulated WAN)
-
-<p align="center">
-<img src="100ms/p3-cdn-branches-plot.png" width=80%" />
-</p>
-
-<p align="center">
-<img src="100ms/p3-semi-mascot-branches-plot.png" width="80%" />
-</p>
-
-<p align="center">
-<img src="100ms/parties-plot.png" width="80%" />
-</p>
-
 # Dependencies
 
 ## Building / Running
@@ -127,6 +77,57 @@ This should not affect the speed of the benchmark: the actual execution consumes
 sudo swapoff tmp-swap
 sudo rm tmp-swap
 ```
+
+# Results
+
+The benchmarks were produced on a laptop with a `Intel i7-11800H` CPU and `64 GB` of RAM.
+See
+[/proc/meminfo](https://gist.github.com/rot256/0cafde6c8c99c7ead891a0b1fe0c952d),
+[dmidecode --type 17](https://gist.github.com/rot256/8d58f3134a504a602ef2d0bba8436fc5),
+[/proc/cpuinfo](https://gist.github.com/rot256/205eefc44178a4c751b95d75e4ab2091) for full details.
+The average is taken over 10 executions, the raw data is included in this repository (see `0ms`, `10ms` and `100ms`).
+
+## 0ms Latency (Localhost)
+
+<p align="center">
+<img src="0ms/p3-cdn-branches-plot.png" width=80%" />
+</p>
+
+<p align="center">
+<img src="0ms/p3-semi-mascot-branches-plot.png" width="80%" />
+</p>
+
+<p align="center">
+<img src="0ms/parties-plot.png" width="80%" />
+</p>
+
+## 10ms Latency (Simulated LAN)
+
+<p align="center">
+<img src="10ms/p3-cdn-branches-plot.png" width=80%" />
+</p>
+
+<p align="center">
+<img src="10ms/p3-semi-mascot-branches-plot.png" width="80%" />
+</p>
+
+<p align="center">
+<img src="10ms/parties-plot.png" width="80%" />
+</p>
+
+## 100ms Latency (Simulated WAN)
+
+<p align="center">
+<img src="100ms/p3-cdn-branches-plot.png" width=80%" />
+</p>
+
+<p align="center">
+<img src="100ms/p3-semi-mascot-branches-plot.png" width="80%" />
+</p>
+
+<p align="center">
+<img src="100ms/parties-plot.png" width="80%" />
+</p>
 
 # Resources
 

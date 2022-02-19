@@ -17,8 +17,7 @@ rebench:
 MP-SPDZ/Programs/Source/bmpc-%.mpc runner-%.go:
 	python3 ./circuit.py $*.yml # compile from yml description
 
-# bmpc-%: runner-%.go
-bmpc-%:
+bmpc-%: runner-%.go
 	cp runner-$*.go mpc/runner.go
 	cd mpc && go build
 	cp mpc/bmpc bmpc-$*
@@ -55,7 +54,7 @@ p3-cdn-branches-plot.png: plot.py \
 	bench-auto-cdn-naive-l16-b32-p3.yml \
 	bench-auto-cdn-naive-l16-b64-p3.yml
 	python3 plot.py $@ \
-		"Branching MPC with Semi-Honest CDN (3 Parties)" \
+		"Branching MPC with Semi-Honest CDN (3 Parties, 2^16 Gates Per Branch)" \
 		branches \
 		time,comm \
 		"CDN Branching" bench-auto-cdn-l16-b2-p3.yml,bench-auto-cdn-l16-b4-p3.yml,bench-auto-cdn-l16-b8-p3.yml,bench-auto-cdn-l16-b16-p3.yml,bench-auto-cdn-l16-b32-p3.yml,bench-auto-cdn-l16-b64-p3.yml \
@@ -75,7 +74,7 @@ p3-semi-mascot-branches-plot.png: plot.py \
 	bench-auto-mascot_semi-naive-l16-b32-p3.yml \
 	bench-auto-mascot_semi-naive-l16-b64-p3.yml
 	python3 plot.py $@ \
-		"Branching MPC with Semi-Honest MASCOT (3 Parties)" \
+		"Branching MPC with Semi-Honest MASCOT (3 Parties, 2^16 Gates Per Branch)" \
 		branches \
 		time,comm \
 		"Semi-MASCOT Branching" bench-auto-mascot_semi-l16-b2-p3.yml,bench-auto-mascot_semi-l16-b4-p3.yml,bench-auto-mascot_semi-l16-b8-p3.yml,bench-auto-mascot_semi-l16-b16-p3.yml,bench-auto-mascot_semi-l16-b32-p3.yml,bench-auto-mascot_semi-l16-b64-p3.yml \
