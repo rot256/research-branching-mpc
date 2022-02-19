@@ -1,6 +1,7 @@
 # About
 
-This is a proof-of-concept implementation of the semi-honest version of the "branching MPC" compiler on-top of semi-honest MASCOT (or any other MPC over an arbitrary prime field provided by MP-SPDZ) and CDN respectively for the Eurocrypt 2022 submission "Communication Efficient Secure Multiparty Computation for Conditional Branches".
+This is a proof-of-concept implementation of the semi-honest version of the "branching MPC" compiler on-top of semi-honest MASCOT (or any other MPC over an arbitrary prime field provided by MP-SPDZ) and CDN respectively for the Eurocrypt 2022 submission
+"Communication Efficient Secure Multiparty Computation for Conditional Branches".
 CDN is implemented by instantiating the linearly homomorphic encryption using ring LWE.
 The implementation is written in a combination of C++ (MP-SPDZ), Go and Python (used for performance non-critical parts).
 A copy of MP-SPDZ is included in this directory to ensure the results can be reproduced in future, should the interface change upstream.
@@ -33,6 +34,34 @@ See
 
 <p align="center">
 <img src="0ms/parties-plot.png" width="80%" />
+</p>
+
+## 10ms Latency (Simulated LAN)
+
+<p align="center">
+<img src="10ms/p3-cdn-branches-plot.png" width=80%" />
+</p>
+
+<p align="center">
+<img src="10ms/p3-semi-mascot-branches-plot.png" width="80%" />
+</p>
+
+<p align="center">
+<img src="10ms/parties-plot.png" width="80%" />
+</p>
+
+## 100ms Latency (Simulated WAN)
+
+<p align="center">
+<img src="100ms/p3-cdn-branches-plot.png" width=80%" />
+</p>
+
+<p align="center">
+<img src="100ms/p3-semi-mascot-branches-plot.png" width="80%" />
+</p>
+
+<p align="center">
+<img src="100ms/parties-plot.png" width="80%" />
 </p>
 
 # Dependencies
