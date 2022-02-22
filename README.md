@@ -87,48 +87,6 @@ See
 [/proc/cpuinfo](https://gist.github.com/rot256/205eefc44178a4c751b95d75e4ab2091) for full details.
 The average is taken over 10 executions, the raw data is included in this repository (see `0ms`, `10ms` and `100ms`).
 
-## 0ms Latency (Localhost)
-
-<p align="center">
-<img src="0ms/p3-cdn-branches-plot.png" width=80%" />
-</p>
-
-<p align="center">
-<img src="0ms/p3-semi-mascot-branches-plot.png" width="80%" />
-</p>
-
-<p align="center">
-<img src="0ms/parties-plot.png" width="80%" />
-</p>
-
-## 10ms Latency (Simulated LAN)
-
-<p align="center">
-<img src="10ms/p3-cdn-branches-plot.png" width=80%" />
-</p>
-
-<p align="center">
-<img src="10ms/p3-semi-mascot-branches-plot.png" width="80%" />
-</p>
-
-<p align="center">
-<img src="10ms/parties-plot.png" width="80%" />
-</p>
-
-## 100ms Latency (Simulated WAN)
-
-<p align="center">
-<img src="100ms/p3-cdn-branches-plot.png" width=80%" />
-</p>
-
-<p align="center">
-<img src="100ms/p3-semi-mascot-branches-plot.png" width="80%" />
-</p>
-
-<p align="center">
-<img src="100ms/parties-plot.png" width="80%" />
-</p>
-
 # Resources
 
 Additional relevant resources.
